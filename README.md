@@ -112,7 +112,6 @@ A web application to simulate and manage coffee making preferences.
 A C-based project implementing custom encryption and decryption logic for secure message handling.
 
 ### 🚀 Features
-- Custom encryption and decryption algorithms  
 - Low-level string and memory manipulation  
 - Hands-on cryptography implementation  
 
