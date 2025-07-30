@@ -1,0 +1,11 @@
+Characters and Icons originally from Chip's Challenge for Windows 95
+Created by Chuck Sommerville
+https://en.wikipedia.org/wiki/Chip's_Challenge
+http://www.niffler.co.uk/Games/ChipsChallenge.htm
+
+Sprites were taken from the Windows 95 version, original hosted on
+https://www.spriters-resource.com/pc_computer/chipschallenge/sheet/27080
+Submitters: 125scratch, Lotos
+
+Map04-10 are the drawn from the first few levels of the original Chip's Challenge,
+with some alterations to reduce difficulty. 

@@ -1,0 +1,74 @@
+services:
+  proxy:
+    image: nginx:latest
+    env_file:
+      - .env
+    restart: unless-stopped
+    volumes:
+      - ./proxy/default.conf.template:/etc/nginx/templates/default.conf.template
+    ports:
+      - "80:80"
+    depends_on:
+      - frontend
+      - backend
+      
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    volumes:
+      - ./backend:/app
+    env_file:
+      - .env
+    ports:
+      - "8001:8000"
+    environment:
+      - DEBUG=1
+      - DJANGO_SETTINGS_MODULE=${DJANGO_SETTINGS_MODULE}
+    depends_on:
+      db:
+        condition: service_healthy
+
+
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules  # Avoid overriding node_modules
+      - /app/dist
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    environment:
+      - CHOKIDAR_USEPOLLING=true  
+    command: npm run dev
+
+  db:
+    image: mysql:8
+    env_file:
+      - .env
+    environment:
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./db/init:/docker-entrypoint-initdb.d/
+    healthcheck:  
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 15s
+      retries: 10
+      timeout: 10s
+
+volumes:
+  mysql_data:

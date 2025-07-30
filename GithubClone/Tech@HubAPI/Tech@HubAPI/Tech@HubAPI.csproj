@@ -1,0 +1,30 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <RootNamespace>Tech_HubAPI</RootNamespace>
+    <UserSecretsId>08370ae2-1549-4608-844d-bffc3f10c60a</UserSecretsId>
+    <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="5.0.12" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="5.0.11" />
+    <PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.10.14" />
+    <PackageReference Include="MySql.Data" Version="8.0.27" />
+    <PackageReference Include="Pomelo.EntityFrameworkCore.MySql" Version="5.0.2" />
+    <PackageReference Include="SixLabors.ImageSharp" Version="2.1.3" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="5.6.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+      <Content Include="Profile_Pictures_JPG\**">
+          <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </Content>
+  </ItemGroup>
+</Project>

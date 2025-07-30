@@ -1,0 +1,1 @@
+usage: decrypt <key> <input_file> <output_file>

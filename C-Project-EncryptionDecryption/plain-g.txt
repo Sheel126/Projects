@@ -1,0 +1,2 @@
+This plaintext input file is used
+for some of the error tests.

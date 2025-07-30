@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Recommendations</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <link rel="stylesheet" href="/css/recommendations.css">
+    <script src="./js/recommendations.js" type="module"></script>
+    <script src="./js/common.js" type="module"></script>
+    <script src="./js/auth.js" type="module"></script>
+
+    <!-- BEGIN FAVICON -->
+    <link rel="icon" href="./images/rope1.svg">
+    <meta name="theme-color" content="#252831">
+    <link rel="apple-touch-icon" sizes="192x192" href="./images/rope1.svg">
+    <link rel="apple-touch-icon" sizes="256x256" href="./images/rope1.svg">
+    <link rel="apple-touch-icon" sizes="384x384" href="./images/rope1.svg">
+    <link rel="apple-touch-icon" sizes="512x512" href="./images/rope1.svg">
+    <!-- END FAVICON -->
+
+    <!-- BEGIN INSTALLABLE APP-->
+    <link rel="manifest" href="./manifest.webmanifest">
+    <link rel="apple-mobile-web-app-capable" content="yes">
+    <link rel="apple-mobile-web-app-status-bar-style" content="black">
+    <link rel="apple-mobile-web-app-title" content="Movemate">
+    <!-- END INSTALLABLE APP-->
+</head>
+<body>
+    <header>
+        <div id="banner">
+            <img id="logo" src="images/logo.svg" alt="Logo">
+            <div id="user-info">
+                <div id="username"></div>
+                <img id="avatar" class="avatar" src="images/placeholder.png" alt="Avatar">
+                <div class="dropdown-menu">
+                    <a id="logout-button">Logout</a>
+                </div>
+            </div>
+        </div>
+        <nav>
+            <a href="/reminders">Reminders</a>
+            <a href="/">Goals</a>
+            <a href="/recommendations">Recommendations</a>
+        </nav>
+    </header>
+    <main>
+        <h1>Recommendations</h1>
+        <div class="createGoalContainer">
+            <textarea class="enterGoals" placeholder="Create a Goal!" rows="4" cols="50"></textarea>
+            <div class="buttonCenter">
+                <button class="createGoalButton">Create</button>
+            </div>
+        </div>
+        <div class="goals"></div>
+    </main>
+    <template id="goal-template">
+        <div class="goal">
+            <h2 class="title"></h2>
+            <div class="recommendations"></div>
+        </div>
+    </template>
+</body>
+</html>

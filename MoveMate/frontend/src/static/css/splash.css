@@ -1,0 +1,135 @@
+body {
+    display: block;
+    padding: 0;
+}
+
+main {
+    display: flex;
+    flex-direction: row;
+    padding: 0;
+    margin: 0;
+    width: 100%;
+}
+
+#loginForm,
+#registerForm {
+    width: 100%;
+}
+
+a {
+    display: block;
+    margin-bottom: 20px;
+    text-decoration: none;
+}
+
+.screen .logo {
+    width: calc(100vw - 100px);
+    margin-bottom: 30vh;
+}
+
+#logo-side .logo {
+    width: calc(50vw - 100px);
+    margin: 0;
+}
+
+.screen {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    align-items: center;
+    background-color: white;
+    padding: 50px;
+    width: 100vw;
+    height: 100%;
+    min-width: 310px;
+}
+
+.welcome {
+    display: none;
+}
+
+#btns {
+    display: flex;
+    justify-content: center;
+}
+
+.btn {
+    width: 300px;
+    height: 50px;
+    background-color: black;
+    color: white;
+    font-size: 20px;
+    margin-right: 10px;
+    border-radius: 30px;
+    transition: all 0.2s ease;
+}
+
+.btn:hover {
+    background-color: white;
+    color: black;
+    border: 1px solid black;
+}
+
+.secondary {
+    background-color: white;
+    color: black;
+    border: 1px solid black;
+}
+
+.secondary:hover {
+    background-color: black;
+    color: white;
+}
+
+#logo-side {
+    display: none;
+}
+
+
+.register {
+    margin-bottom: 60px;
+}
+
+.register div, .login div {
+    margin-bottom: 10px;
+}
+
+
+@media screen and (min-width:700px) {
+
+    #logo-side {
+        display: flex;
+        padding: 50px;
+        align-items: center;
+        justify-content: center;
+        width: 50%;
+        height: 100vh;
+        background-color: white;
+    }
+
+
+    .screen {
+        width: 50%;
+        height: 100%;
+        background-color: transparent;
+        align-items: flex-start;
+        justify-content: space-between;
+    }
+
+    .screen .logo {
+        display: none;
+    }
+
+    .screen .welcome {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        align-self: flex-start;
+        margin-bottom: 50px;
+    }
+
+    #w1 {
+        font-weight: bold;
+        margin-bottom: 10px;
+    }
+}
