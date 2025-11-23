@@ -4,11 +4,11 @@ import jakarta.persistence.*;
 import lombok.*;
 
 @Entity
-@Table(name = "users")
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
+@Table(name = "users")
 public class User {
 
     @Id
@@ -16,6 +16,10 @@ public class User {
     private Long id;
 
     private String name;
+
+    @Column(unique = true)
     private String email;
-    private Double balance;
+
+    private double monthlyIncome;
+    private double creditScore;
 }

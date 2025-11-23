@@ -21,4 +21,8 @@ public class UserService {
     public User saveUser(User user) {
         return repo.save(user);
     }
+
+    public void deleteUser(Long id) {
+        repo.deleteById(id);
+    }
 }
