@@ -2,12 +2,6 @@ package com.sheel.finance_ai.ai;
 
 import dev.langchain4j.model.openai.OpenAiChatModel;
 
-import dev.langchain4j.data.message.AiMessage;
-import dev.langchain4j.data.message.UserMessage;
-import dev.langchain4j.service.*;
-
-import java.util.Collections;
-
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -29,12 +23,22 @@ public class MarketAgent {
             You are a financial market analysis agent.
             Analyze the stock %s priced at %.2f.
 
-            Provide:
-            - buy/sell/hold
-            - short-term prediction
-            - long-term prediction
-            - confidence score (0-1)
-            - reasoning
+            Output ONLY valid JSON following this schema:
+
+            {
+                "action": "buy" | "sell" | "hold",
+                "horizon": "short" | "long",
+                "predictedGain": number,
+                "confidenceScore": number,
+                "reasoning": "string"
+            }
+
+            Horizon rules:
+            - "short" = next 1-4 weeks
+            - "long" = 1 year or more
+            Choose the horizon based on what makes the most sense for this specific stock.
+            
+            Use realistic financial reasoning.
             """.formatted(ticker, price);
 
 

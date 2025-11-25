@@ -9,7 +9,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
 
 @Service
-public class MarketDataService {
+public class StockPriceService {
 
     // public BigDecimal getCurrentPrice(String ticker) {
     //     try {
@@ -28,7 +28,7 @@ public class MarketDataService {
     private static final String BASE_URL =
         "https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=%s&apikey=%s";
 
-    public MarketDataService(@Value("${alphavantage.api-key}") String apiKey) {
+    public StockPriceService(@Value("${alphavantage.api-key}") String apiKey) {
         this.apiKey = apiKey;
     }
 
@@ -37,13 +37,12 @@ public class MarketDataService {
             String url = String.format(BASE_URL, symbol, this.apiKey);
             String json = restTemplate.getForObject(url, String.class);
 
-            System.out.println("AlphaVantage Response: " + json);
+            System.out.println(json);
 
             JsonNode root = objectMapper.readTree(json);
             JsonNode timeSeries = root.get("Time Series (Daily)");
 
             if (timeSeries == null) {
-                System.out.println("HERRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRREE");
                 return null;
             }
 

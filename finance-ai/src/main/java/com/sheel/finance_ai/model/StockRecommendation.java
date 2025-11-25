@@ -18,6 +18,8 @@ public class StockRecommendation {
 
     private String ticker;
 
+    private double price;
+
     // "buy", "sell", "hold"
     private String action;
 
