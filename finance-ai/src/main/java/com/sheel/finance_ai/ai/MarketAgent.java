@@ -5,12 +5,19 @@ import dev.langchain4j.model.openai.OpenAiChatModel;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import com.sheel.finance_ai.model.StockRecommendation;
+import com.sheel.finance_ai.repository.StockRecommendationRepository;
+
 @Component
 public class MarketAgent {
 
     private final OpenAiChatModel model;
+    private final StockRecommendationRepository repo;
 
-    public MarketAgent(@Value("${openai.api.key}") String apiKey) {
+    public MarketAgent(@Value("${openai.api.key}") String apiKey, StockRecommendationRepository repo) {
+
+        this.repo = repo;
+
         this.model = OpenAiChatModel.builder()
             .apiKey(apiKey)
             .modelName("gpt-4o-mini")
@@ -43,5 +50,9 @@ public class MarketAgent {
 
 
         return this.model.chat(prompt); 
+    }
+
+    public void save(StockRecommendation rec) {
+        repo.save(rec);
     }
 }

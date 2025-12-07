@@ -1,11 +1,10 @@
 package com.sheel.finance_ai.controller;
 
-import com.sheel.finance_ai.ai.AgentRunner;
 import com.sheel.finance_ai.ai.AgentService;
+import com.sheel.finance_ai.model.StockRecommendation;
 
 import lombok.RequiredArgsConstructor;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -13,18 +12,16 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/agent")
 public class AgentController {
 
-    @Autowired
-    private AgentRunner agent;
 
     private final AgentService agentService;
 
-    @GetMapping("/market/{ticker}")
-    public Object fetchMarket(@PathVariable String ticker) throws Exception {
-        return agent.runTool("market_data", ticker);
+    @GetMapping("/analyze/{ticker}")
+    public StockRecommendation analyzeTicker(@PathVariable String ticker) throws Exception {
+        return agentService.analyzeAndSave(ticker);
     }
 
     @GetMapping
-    public String ask(@RequestParam String q) throws Exception {
+    public StockRecommendation ask(@RequestParam String q) throws Exception {
         return agentService.askAgent(q);
     }
 
