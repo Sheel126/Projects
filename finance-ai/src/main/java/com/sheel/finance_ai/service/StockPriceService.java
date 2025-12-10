@@ -37,8 +37,6 @@ public class StockPriceService {
             String url = String.format(BASE_URL, symbol, this.apiKey);
             String json = restTemplate.getForObject(url, String.class);
 
-            System.out.println(json);
-
             JsonNode root = objectMapper.readTree(json);
             JsonNode timeSeries = root.get("Time Series (Daily)");
 

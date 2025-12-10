@@ -8,13 +8,15 @@ import org.springframework.stereotype.Component;
 
 import java.net.URI;
 import java.net.http.*;
+import java.util.ArrayList;
+import java.util.List;
 
 @Slf4j
 @Component
 public class TrendingTool {
 
-    @Tool("Fetch trending stock tickers")
-    public String getTrendingTickers() {
+    @Tool("getTrendingTickers")
+    public List<String> getTrendingTickers() {
 
         try {
             String url = "https://query1.finance.yahoo.com/v1/finance/trending/US";
@@ -22,7 +24,7 @@ public class TrendingTool {
             HttpClient client = HttpClient.newHttpClient();
             HttpRequest req = HttpRequest.newBuilder()
                     .uri(URI.create(url))
-                    .header("User-Agent", "Mozilla/5.0")  // IMPORTANT
+                    .header("User-Agent", "Mozilla/5.0")
                     .build();
 
             HttpResponse<String> res = client.send(req, HttpResponse.BodyHandlers.ofString());
@@ -30,10 +32,9 @@ public class TrendingTool {
 
             log.info("TrendingTool RAW RESPONSE: {}", body);
 
-            // Validate JSON
             if (!body.startsWith("{")) {
-                log.error("Non-JSON returned from trending API: {}", body);
-                return "[]";
+                log.error("Non-JSON returned from trending API");
+                return List.of();
             }
 
             JSONObject json = new JSONObject(body);
@@ -43,16 +44,17 @@ public class TrendingTool {
                     .getJSONObject(0)
                     .getJSONArray("quotes");
 
-            JSONArray tickers = new JSONArray();
+            List<String> tickers = new ArrayList<>();
             for (int i = 0; i < quotes.length(); i++) {
-                tickers.put(quotes.getJSONObject(i).getString("symbol"));
+                tickers.add(quotes.getJSONObject(i).getString("symbol"));
             }
 
-            return tickers.toString();
+            return tickers;
 
         } catch (Exception e) {
             log.error("Trending tickers fetch failed", e);
-            return "[]";
+            return List.of();
         }
     }
+
 }

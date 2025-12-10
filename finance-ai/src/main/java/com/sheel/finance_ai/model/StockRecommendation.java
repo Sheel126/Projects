@@ -16,22 +16,28 @@ public class StockRecommendation {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(name = "ticker")
     private String ticker;
 
+    @Column(name = "price")
     private double price;
 
-    // "buy", "sell", "hold"
+    @Column(name = "action")
     private String action;
 
-    // short_term or long_term
+    @Column(name = "horizon")
     private String horizon;
 
+    @Column(name = "predicted_gain")
     private double predictedGain;
 
+    @Column(name = "confidence_score")
     private double confidenceScore;
 
-    @Column(columnDefinition = "TEXT")
+    @Column(name = "reasoning", columnDefinition = "TEXT")
     private String reasoning;
 
+    @Column(name = "created_at")
     private LocalDateTime createdAt;
 }
+

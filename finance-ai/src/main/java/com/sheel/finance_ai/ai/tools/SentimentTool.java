@@ -1,26 +1,46 @@
 package com.sheel.finance_ai.ai.tools;
 
 import dev.langchain4j.agent.tool.Tool;
-import lombok.RequiredArgsConstructor;
+import dev.langchain4j.model.openai.OpenAiChatModel;
+
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 @Component
-@RequiredArgsConstructor
 public class SentimentTool {
 
-    @Tool("Analyze sentiment of provided text. Returns bullish/bearish/neutral with score.")
-    public String analyzeSentiment(String text) {
-        String lower = text.toLowerCase();
+    private final OpenAiChatModel model;
 
-        int score = 0;
-        if (lower.contains("up") || lower.contains("beat") || lower.contains("growth") || lower.contains("strong"))
-            score++;
-        if (lower.contains("down") || lower.contains("miss") || lower.contains("weak") || lower.contains("decline"))
-            score--;
-
-        if (score > 0) return "bullish (rule-based)";
-        if (score < 0) return "bearish (rule-based)";
-        return "neutral";
+    public SentimentTool(@Value("${openai.api.key}") String apiKey) {
+        this.model = OpenAiChatModel.builder()
+            .apiKey(apiKey)
+            .modelName("gpt-4o-mini")
+            .temperature(0.7)
+            .build();
     }
+    
 
+    @Tool(name="analyzeSentiment", 
+      value="Analyze stock sentiment using the LLM. Returns bullish/bearish/neutral.")
+    public String analyzeSentiment(String text) {
+        if (text == null || text.isBlank()) return "neutral (empty text)";
+
+        System.out.println("TEXT: " + text);
+
+        String prompt = """
+            You are a financial sentiment classifier.
+            Analyze the sentiment of the following text about a stock.
+
+            Return ONLY one word:
+            - bullish
+            - bearish
+            - neutral
+
+            Text:
+            %s
+            """.formatted(text);
+
+        return this.model.chat(prompt);
+    }
+    
 }
