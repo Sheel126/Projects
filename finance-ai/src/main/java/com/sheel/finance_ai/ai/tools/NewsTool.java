@@ -19,22 +19,34 @@ public class NewsTool {
     @Value("${news.api.key}")
     private String apiKey;
 
-    @Tool(name="getNews", value="Fetch latest news headlines for a stock ticker")
-    public String getNews(String ticker) {
-
+    @Tool(
+        name="getNews",
+        value = """
+            Fetch relevant business/finance news for a company.
+            When calling this tool, ALWAYS pass the full company name, NOT the ticker.
+            Convert ticker → company name internally (e.g., TSLA → Tesla Inc, UBER → Uber Technologies Inc).
+            Only pass the proper company name.
+            """
+    )
+    public String getNews(String companyName) {
+        System.out.println("NAMEEEEE: " + companyName);
         try {
             String url = "https://eventregistry.org/api/v1/article/getArticles";
 
-            // Build the JSON body exactly how the API expects it
+            // SIMPLE VALID BODY
             JSONObject body = new JSONObject();
             body.put("action", "getArticles");
-            body.put("keyword", ticker);
 
-            JSONArray sources = new JSONArray();
-            sources.put("http://en.wikipedia.org/wiki/United_States");
-            body.put("sourceLocationUri", sources);
+            // keyword search
+            body.put("keyword", companyName);
 
+            // business category filter
+            body.put("categoryUri", "dmoz/Business");
+
+            // ignore paywalled sources
             body.put("ignoreSourceGroupUri", "paywall/paywalled_sources");
+
+            // other settings
             body.put("articlesPage", 1);
             body.put("articlesCount", 10);
             body.put("articlesSortBy", "date");
@@ -49,6 +61,8 @@ public class NewsTool {
             body.put("resultType", "articles");
             body.put("apiKey", apiKey);
 
+            System.out.println("BODYYY: " + body.toString());
+
             HttpClient client = HttpClient.newHttpClient();
 
             HttpRequest request = HttpRequest.newBuilder()
@@ -59,6 +73,9 @@ public class NewsTool {
 
             HttpResponse<String> response =
                     client.send(request, HttpResponse.BodyHandlers.ofString());
+
+            System.out.println("STATUS: " + response.statusCode());
+            System.out.println("RAW RESPONSE: " + response.body());
 
             JSONObject json = new JSONObject(response.body());
 
@@ -72,7 +89,6 @@ public class NewsTool {
 
             if (results == null) return "[]";
 
-            // Prepare cleaned version for LLM
             JSONArray cleaned = new JSONArray();
 
             for (int i = 0; i < Math.min(5, results.length()); i++) {
@@ -91,12 +107,12 @@ public class NewsTool {
                 cleaned.put(clean);
             }
 
-            log.info("NEWS TOOL RESPONSE FOR {}: {}", ticker, cleaned.toString());
+            log.info("NEWS TOOL RESPONSE FOR {}: {}", companyName, cleaned.toString());
             System.out.println("NEWS: " + cleaned.toString());
             return cleaned.toString();
 
         } catch (Exception e) {
-            log.error("EventRegistry news fetch failed for {}", ticker, e);
+            log.error("EventRegistry news fetch failed for {}", companyName, e);
             return "[]";
         }
     }

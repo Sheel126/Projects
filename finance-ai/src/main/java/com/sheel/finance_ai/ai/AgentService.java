@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import com.sheel.finance_ai.ai.memory.AgentMemory;
 import com.sheel.finance_ai.ai.tools.HistoryTool;
 import com.sheel.finance_ai.ai.tools.NewsTool;
+import com.sheel.finance_ai.ai.tools.PredictedGainTool;
 import com.sheel.finance_ai.ai.tools.PriceTool;
 import com.sheel.finance_ai.ai.tools.SentimentTool;
 import com.sheel.finance_ai.ai.tools.TrendingTool;
@@ -48,7 +49,8 @@ public class AgentService {
             TrendingTool trendingTool,
             HistoryTool historyTool,
             SentimentTool sentimentTool,
-            NewsTool newsTool
+            NewsTool newsTool,
+            PredictedGainTool predictedGainTool
     ) {
 
         ChatLanguageModel model = OpenAiChatModel.builder()
@@ -59,7 +61,7 @@ public class AgentService {
 
         this.assistant = AiServices.builder(FinanceAssistant.class)
                 .chatLanguageModel(model)
-                .tools(priceTool, trendingTool, historyTool, sentimentTool, newsTool)
+                .tools(priceTool, trendingTool, historyTool, sentimentTool, newsTool, predictedGainTool)
                 .chatMemory(MessageWindowChatMemory.withMaxMessages(15))
                 .build();
     }
@@ -85,44 +87,117 @@ public class AgentService {
             You MUST use ALL of the following tools and their outputs directly and verbatim:
             1. PriceTool.getCurrentPrice(ticker)
             2. HistoryTool.getHistory(ticker)
-            3. NewsTool.getNews(ticker)
+            3. NewsTool.getNews(companyName)
             4. SentimentTool.analyzeSentiment(text)
             5. TrendingTool.getTrendingTickers()
+            6. PredictedGainTool.getPredictGain(ticker)
 
             HOW TO USE THE NEWS + SENTIMENT TOGETHER (MANDATORY):
-            - Call NewsTool.getNews(ticker). It returns a JSON array of article objects with keys at minimum: title, description, url, date, source.
+            - Call NewsTool.getNews(companyName). 
+                - You MUST convert the ticker into the full company name and pass that name (e.g., TSLA → Tesla Inc). Use your internal knowledge to do this.
+                - Never pass the raw ticker to NewsTool.
+                - It returns a JSON array of article objects with keys at minimum: title, description, url, date, source.
             - Build a single text string named NEWS_BLOB by concatenating up to the first 10 articles returned in order. For each article concatenate its title, newline, description/body, newline, url, newline, source, then two newline separators (\"\\n\\n---\\n\\n\").
             - Example (for each article): \"{title}\\n{description}\\n{url}\\n{source}\\n\\n---\\n\\n\".
             - Once NEWS_BLOB is constructed, call SentimentTool.analyzeSentiment(NEWS_BLOB).
             - You MUST include the exact SentimentTool output (verbatim) in the reasoning. Use the sentiment output as a primary signal for news sentiment.
 
+            HOW TO USE PREDICTEDGAINTOOL (MANDATORY):
+            - Call PredictedGainTool.getPredictGain(ticker). It returns a map with:
+                * "predictedGain": number (percentage, can be negative)
+                * "confidence": number (0-100 scale)
+                * "volatility": number (percentage)
+                * "signal": string (STRONG_BUY, BUY, HOLD, SELL, STRONG_SELL, NEUTRAL, ERROR)
+            - Include ALL these values verbatim in your reasoning.
+            - Use the tool's predictedGain as your PRIMARY technical baseline.
+            - Adjust this baseline based on sentiment, news, and trending data.
+            - The tool's confidence score should heavily influence your final confidenceScore.
+
             REQUIRED TOOL USAGE ORDER (you must call all):
             1) PriceTool.getCurrentPrice(ticker) -> include numeric price.
             2) HistoryTool.getHistory(ticker) -> summarize recent trend (up/down/flat) and timeframe used.
-            3) NewsTool.getNews(ticker) -> construct NEWS_BLOB as described.
-            4) SentimentTool.analyzeSentiment(NEWS_BLOB) -> include full tool output verbatim and interpret it.
-            5) TrendingTool.getTrendingTickers() -> compare ticker to trending tickers using metrics the tool returns.
+            3) PredictedGainTool.getPredictGain(ticker) -> include ALL output fields verbatim (predictedGain, confidence, volatility, signal).
+            4) NewsTool.getNews(companyName) -> construct NEWS_BLOB as described.
+            5) SentimentTool.analyzeSentiment(NEWS_BLOB) -> include full tool output verbatim and interpret it.
+            6) TrendingTool.getTrendingTickers() -> compare ticker to trending tickers using metrics the tool returns.
 
             AFTER calling tools, follow these rules precisely:
 
-            TASK:
-            - Use PriceTool to fetch live price.
-            - Use HistoryTool for trend direction (state timeframe and metric).
-            - Use NewsTool + SentimentTool to gauge sentiment (present NEWS_BLOB excerpt boundaries and the exact SentimentTool output).
-            - Compare trend and sentiment to TrendingTool results.
-            - Decide BUY, SELL, or HOLD.
-            - Determine horizon:
-                * "long" (1+ years) for fundamentally strong, large-cap, stable companies such as AAPL, MSFT, GOOGL, AMZN, META, NVDA, TSLA, BRK.B, JPM, V, MA, COST. Default to long for these unless a clear short-term catalyst appears.
-                * "short" (1–4 weeks) only when tools show strong short-term catalysts, momentum, or volatility.
-            - Predicted gain (percent) must be grounded in the tool outputs:
-                * Short-term: realistic 1–10
-                * Long-term: realistic 5–40
-            - Provide a confidence score between 0 and 1, justified by tool outputs.
-            - Reason step-by-step and include the tool outputs used (exact values or verbatim outputs).
-                1. State current price and recent trend (include PriceTool and HistoryTool outputs).
-                2. Summarize recent news and include the exact SentimentTool output. Also include which article URLs and sources you used (from NewsTool).
-                3. Compare trend and sentiment to trending tickers (include TrendingTool output).
-                4. Decide action, horizon, predicted gain, and confidence.
+            DECISION LOGIC:
+            1. START with PredictedGainTool output as your technical baseline:
+               - If signal is STRONG_BUY/BUY and predictedGain > 0 → lean BUY
+               - If signal is STRONG_SELL/SELL and predictedGain < 0 → lean SELL
+               - If signal is HOLD/NEUTRAL → lean HOLD
+            
+            2. ADJUST based on sentiment:
+               - Positive sentiment (> 0.3) → increase predicted gain by 10-30%%
+               - Negative sentiment (< -0.3) → decrease predicted gain or flip to SELL
+               - Neutral sentiment → keep technical prediction as-is
+            
+            3. VALIDATE with trending data:
+               - If ticker appears in top trending with positive metrics → boost confidence
+               - If sector/market trending negative → reduce predicted gain by 10-20%%
+            
+            4. DETERMINE HORIZON:
+               - "long" (1+ years) for fundamentally strong, large-cap, stable companies such as AAPL, MSFT, GOOGL, AMZN, META, NVDA, TSLA, BRK.B, JPM, V, MA, COST. Default to long for these unless a clear short-term catalyst appears.
+               - "short" (1–4 weeks) when:
+                   * PredictedGainTool shows high volatility (> 3%%)
+                   * Strong short-term news catalyst present
+                   * Signal is STRONG_BUY or STRONG_SELL
+            
+            5. CALCULATE FINAL PREDICTED GAIN:
+               - Base = PredictedGainTool.predictedGain
+               - Apply sentiment adjustment (+/- 10-30%%)
+               - Apply trending adjustment (+/- 10-20%%)
+               - Cap realistic ranges:
+                   * Short-term: -15%% to +15%%
+                   * Long-term: -10%% to +50%%
+            
+            6. CALCULATE CONFIDENCE SCORE (0-1):
+               - Base = PredictedGainTool.confidence / 100
+               - Increase by 0.1 if sentiment aligns with technical signal
+               - Increase by 0.1 if ticker is trending positively
+               - Decrease by 0.1 if high volatility (> 4%%)
+               - Decrease by 0.2 if sentiment contradicts technical signal
+               - Cap between 0.2 and 0.95
+
+            REASONING STRUCTURE (MANDATORY):
+            Your reasoning MUST follow this exact structure:
+
+            === STEP 1: CURRENT PRICE & TREND ===
+            - Current Price: [exact PriceTool output]
+            - Historical Trend: [HistoryTool summary with timeframe]
+
+            === STEP 2: TECHNICAL ANALYSIS ===
+            PredictedGainTool Output (VERBATIM):
+            - Predicted Gain: [value]%%
+            - Technical Confidence: [value]%%
+            - Volatility: [value]%%
+            - Signal: [signal]
+            
+            Technical Interpretation: [explain what these numbers mean]
+
+            === STEP 3: NEWS & SENTIMENT ===
+            Recent News Sources: [list 3-5 article URLs/sources from NewsTool]
+            
+            SentimentTool Output (VERBATIM): [paste exact output]
+            
+            Sentiment Interpretation: [explain impact on prediction]
+
+            === STEP 4: MARKET CONTEXT ===
+            TrendingTool Output: [paste relevant trending data]
+            
+            Comparison: [how does this ticker compare to trending stocks]
+
+            === STEP 5: FINAL DECISION ===
+            Starting Point: [PredictedGainTool.predictedGain]%%
+            Sentiment Adjustment: [+/- X%%] because [reason]
+            Trending Adjustment: [+/- X%%] because [reason]
+            Final Predicted Gain: [calculated value]%%
+            
+            Action: [BUY/SELL/HOLD] because [synthesize all signals]
+            Horizon: [short/long] because [volatility/stability reasoning]
+            Confidence: [0-1] calculated as: [show calculation steps]
 
             OUTPUT FORMAT (MANDATORY JSON ONLY):
             You MUST return ONLY valid JSON with EXACTLY this structure:
@@ -132,25 +207,32 @@ public class AgentService {
                 "price": number,                     // MUST be exactly the PriceTool output
                 "action": "buy" | "sell" | "hold",
                 "horizon": "short" | "long",
-                "predictedGain": number,
-                "confidenceScore": number,           // MUST match your scoring logic
-                "reasoning": "string"
+                "predictedGain": number,             // MUST be your final calculated value, not raw tool output
+                "confidenceScore": number,           // MUST be between 0 and 1
+                "reasoning": "string"                // MUST follow the 5-step structure above
             }
 
             RULES FOR THE JSON FIELDS:
             - "price" MUST be the exact numeric value returned by PriceTool.getCurrentPrice(ticker).
-            - "confidenceScore" MUST be included and MUST be between 0 and 1.
+            - "predictedGain" MUST be your final calculated prediction after all adjustments (NOT the raw PredictedGainTool output).
+            - "confidenceScore" MUST be between 0 and 1 (NOT 0-100).
             - You may NOT omit any field.
             - You may NOT rename any field.
             - You may NOT add additional top-level fields.
-            - If a tool fails, still include all fields but explain inside "reasoning".
-
-            - The "reasoning" string MUST contain:
-                * the raw tool outputs inserted verbatim (PriceTool, HistoryTool summary, NewsTool snippet/URLs used, full SentimentTool response, TrendingTool top items),
-                * a clear step-by-step deduction from these outputs to the final decision.
+            - If a tool fails, still include all fields but explain inside "reasoning" and adjust confidence down.
 
             FAILURE HANDLING:
-            - If any tool returns an error or empty result, state the tool name and its returned value verbatim in the reasoning and then continue using other available tools. Do NOT invent missing data.
+            - If PredictedGainTool returns error or 0.0 with low confidence, fall back to HistoryTool trend analysis but reduce final confidence by 0.3.
+            - If any tool returns an error, state the tool name and error verbatim in reasoning and continue with other tools.
+            - If sentiment analysis fails, use neutral sentiment (0) and note this in reasoning.
+            - Do NOT invent missing data.
+
+            CRITICAL REMINDERS:
+            - PredictedGainTool output is your STARTING POINT, not your final answer
+            - You MUST show all adjustment calculations in reasoning
+            - Sentiment and trending data should modify, not replace, technical analysis
+            - High volatility should trigger "short" horizon even for stable stocks
+            - Always explain WHY you adjusted the predicted gain up or down
 
             Analyze: %s
             """.formatted(memoryContext, ticker);
@@ -161,22 +243,22 @@ public class AgentService {
             // ObjectMapper mapper = new ObjectMapper();
             // return mapper.readValue(aiJson, StockRecommendation.class);
 
-            return assistant.chat(prompt);
+            //return assistant.chat(prompt);
 
-            // System.out.println(newsTool.getNews(ticker));
+            System.out.println(newsTool.getNews("Palantir Technologies Inc"));
 
-            // StockRecommendation temp = new StockRecommendation();
-            // temp.setTicker("GOOGL");
-            // temp.setAction("hold");
-            // temp.setConfidenceScore(0.75);
-            // temp.setCreatedAt(java.time.LocalDateTime.now());
-            // temp.setHorizon("long");
-            // temp.setPredictedGain(10.5);
-            // temp.setReasoning("\"GOOGL has shown resilience in its core advertising business and a growing investment in AI technologies, which could enhance future revenue. However, current macroeconomic conditions and potential regulatory scrutiny suggest a cautious approach is warranted. Holding for the long term allows for potential recovery and growth as market conditions stabilize.\"");
-            // temp.setId((long) 10);
-            // temp.setPrice(100.97);
+            StockRecommendation temp = new StockRecommendation();
+            temp.setTicker("GOOGL");
+            temp.setAction("hold");
+            temp.setConfidenceScore(0.75);
+            temp.setCreatedAt(java.time.LocalDateTime.now());
+            temp.setHorizon("long");
+            temp.setPredictedGain(10.5);
+            temp.setReasoning("\"GOOGL has shown resilience in its core advertising business and a growing investment in AI technologies, which could enhance future revenue. However, current macroeconomic conditions and potential regulatory scrutiny suggest a cautious approach is warranted. Holding for the long term allows for potential recovery and growth as market conditions stabilize.\"");
+            temp.setId((long) 10);
+            temp.setPrice(100.97);
 
-            // return temp;
+            return temp;
 
 
         } catch (Exception e) {
