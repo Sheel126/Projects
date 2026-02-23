@@ -125,6 +125,10 @@ notebooks/
 
 # 🚀 How to Use
 
+## Run in Github CodeSpaces
+- Easiest way to run and try it out is github codespaces
+- See documents attached in repo
+- https://github.com/jigar3730/finance-vibe/blob/main/How%20to%20run%20in%20Github%20codespaces.docx
 ## 1️⃣ Open in Dev Container
 
 Ensure Docker is running.
