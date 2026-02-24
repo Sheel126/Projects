@@ -14,7 +14,6 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 try:
     from finance_vibe import config
 except ImportError:
-    # Resolve path if run as a standalone script
     sys.path.append(os.path.abspath(
         os.path.join(os.path.dirname(__file__), "../../")))
     from finance_vibe import config
@@ -22,8 +21,8 @@ except ImportError:
 # -----------------------------
 # Tunables
 # -----------------------------
-MIN_ROWS = 60  # enough for SMA50 + signal windows
-PRINT_TOP_N = 500  # printing huge markdown tables is slow
+MIN_ROWS = 60
+PRINT_TOP_N = 500
 
 # -----------------------------
 # Result model
@@ -45,10 +44,9 @@ class ScanRow:
     score: int
     sentiment: str
     action: str
-    breakdown: Optional[dict] = None  # optional detailed component scoring
 
     def to_dict(self) -> dict:
-        out = {
+        return {
             "Ticker": self.ticker,
             "Price": self.price,
             "SMA20": self.sma20,
@@ -63,9 +61,6 @@ class ScanRow:
             "Sentiment": self.sentiment,
             "Action": self.action,
         }
-        if self.breakdown:
-            out.update(self.breakdown)
-        return out
 
 # -----------------------------
 # File discovery / ticker parse
@@ -97,6 +92,7 @@ def load_ohlc_csv(path: str) -> pd.DataFrame:
     df.columns = [c.strip().capitalize() for c in df.columns]
     date_col = next((c for c in df.columns if "Date" in c), None)
     close_col = next((c for c in df.columns if "Close" in c), None)
+
     if not date_col or not close_col:
         raise ValueError(f"Missing Date or Close in {path}")
 
@@ -104,10 +100,12 @@ def load_ohlc_csv(path: str) -> pd.DataFrame:
     df["Date"] = pd.to_datetime(df["Date"])
     df = df.sort_values("Date").reset_index(drop=True)
     df["Close"] = pd.to_numeric(df["Close"], errors="coerce")
+
     if "High" in df.columns:
         df["High"] = pd.to_numeric(df["High"], errors="coerce")
     if "Low" in df.columns:
         df["Low"] = pd.to_numeric(df["Low"], errors="coerce")
+
     return df.dropna(subset=["Date", "Close"])
 
 # -----------------------------
@@ -144,14 +142,18 @@ def cci_fast(df: pd.DataFrame, period: int = 20) -> pd.Series:
         tp = (df["High"] + df["Low"] + df["Close"]) / 3.0
     else:
         tp = df["Close"]
+
     x = tp.to_numpy(dtype=np.float64)
     n = x.size
     out = np.full(n, np.nan, dtype=np.float64)
+
     if n < period:
         return pd.Series(out, index=tp.index)
+
     w = np.lib.stride_tricks.sliding_window_view(x, period)
     w_mean = w.mean(axis=1)
     w_md = np.mean(np.abs(w - w_mean[:, None]), axis=1)
+
     denom = 0.015 * w_md
     denom = np.where(np.abs(denom) > 1e-9, denom, 1e-9)
     tp_last = w[:, -1]
@@ -177,11 +179,8 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
 # -----------------------------
 
 
-def score_last_row(last: pd.Series, weekly: bool = False) -> int:
-    """Compute score. If weekly=True, apply special weekly logic."""
+def score_last_row(last: pd.Series) -> int:
     score = 0
-    breakdown = {}
-
     close = last["Close"]
     sma20 = last["SMA20"]
     sma50 = last["SMA50"]
@@ -192,89 +191,53 @@ def score_last_row(last: pd.Series, weekly: bool = False) -> int:
     macd_h = last["MACD_H"]
     macd_s = last["MACD_S"]
 
-    # --- Trend (0–4) ---
+    # Trend
     if close > sma20 > sma50:
         score += 4
-        breakdown["Trend"] = 4
     elif close < sma20 < sma50:
         score -= 4
-        breakdown["Trend"] = -4
-    else:
-        breakdown["Trend"] = 0
 
-    # --- Momentum (−3 to +3) ---
+    # Momentum
     if macd_h > macd_s and rsi > rsi_s:
         score += 2
-        breakdown["Momentum"] = 2
     elif macd_h < macd_s and rsi < rsi_s:
         score -= 2
-        breakdown["Momentum"] = -2
-    else:
-        breakdown["Momentum"] = 0
 
+    # Momentum decay
     if macd_h < macd_s and close > sma20:
         score -= 1
-        breakdown["MomentumDecay"] = -1
-    else:
-        breakdown["MomentumDecay"] = 0
 
-    # --- Timing / Entry (−2 to +2) ---
+    # Timing / Pullback
     dist_sma20 = (close - sma20) / sma20
     if 0.0 <= dist_sma20 <= 0.05:
         score += 2
-        breakdown["Timing"] = 2
     elif dist_sma20 > 0.12:
         score -= 2
-        breakdown["Timing"] = -2
     elif dist_sma20 < -0.05:
         score -= 1
-        breakdown["Timing"] = -1
-    else:
-        breakdown["Timing"] = 0
 
-    # --- CCI Logic ---
+    # CCI
     if -100 < cci < 100 and cci > cci_s:
         score += 1
-        breakdown["CCI"] = 1
     elif cci > 200:
         score -= 2
-        breakdown["CCI"] = -2
     elif cci < -200:
         score += 1
-        breakdown["CCI"] = 1
-    else:
-        breakdown["CCI"] = 0
 
-    # --- RSI Risk ---
+    # RSI risk
     if rsi > 80:
         score = min(score, 5)
-        breakdown["RSI_Risk"] = 0
     elif rsi > 70:
         score -= 1
-        breakdown["RSI_Risk"] = -1
-    elif rsi < 30:
+    if rsi < 30:
         score += 1
-        breakdown["RSI_Risk"] = 1
-    else:
-        breakdown["RSI_Risk"] = 0
 
-    # --- Weekly specific logic ---
-    if weekly:
-        # boost high-quality weekly setups slightly
-        if score >= 7 and macd_h > 0 and rsi > 50:
-            score += 1
-            breakdown["WeeklyBonus"] = 1
-        else:
-            breakdown["WeeklyBonus"] = 0
+    # High score persistence
+    if score >= 7:
+        if not (macd_h > 0 and rsi > 50):
+            score -= 2
 
-    # --- High score persistence check ---
-    if score >= 7 and not (macd_h > 0 and rsi > 50):
-        score -= 2
-        breakdown["PersistenceCheck"] = -2
-    else:
-        breakdown["PersistenceCheck"] = 0
-
-    return int(np.clip(score, -10, 10)), breakdown
+    return int(np.clip(score, -10, 10))
 
 
 def sentiment_action(score: int) -> tuple[str, str]:
@@ -302,11 +265,12 @@ def scan_one_file(path: str) -> ScanRow:
     df = load_ohlc_csv(path)
     if len(df) < MIN_ROWS:
         raise ValueError(f"not enough rows: {len(df)}")
+
     feat = build_features(df)
     last = feat.iloc[-1]
-    weekly = config.INTERVAL.lower().endswith("wk")
-    score, breakdown = score_last_row(last, weekly=weekly)
+    score = score_last_row(last)
     sentiment, action = sentiment_action(score)
+
     return ScanRow(
         ticker=ticker,
         price=float(last["Close"]),
@@ -321,17 +285,57 @@ def scan_one_file(path: str) -> ScanRow:
         score=score,
         sentiment=sentiment,
         action=action,
-        breakdown=breakdown
     )
 
 
-def calculate_vibe_score(ticker: str, df: pd.DataFrame) -> dict:
+def calculate_vibe_score(ticker: str, df: pd.DataFrame, return_components: bool = False) -> dict:
     try:
         feat = build_features(df)
         last = feat.iloc[-1]
-        weekly = config.INTERVAL.lower().endswith("wk")
-        score, breakdown = score_last_row(last, weekly=weekly)
-        return {"Score": score, "Breakdown": breakdown}
+        score = score_last_row(last)
+
+        if return_components:
+            close = last["Close"]
+            sma20 = last["SMA20"]
+            sma50 = last["SMA50"]
+            rsi = last["RSI"]
+            rsi_s = last["RSI_S"]
+            cci = last["CCI"]
+            cci_s = last["CCI_S"]
+            macd_h = last["MACD_H"]
+            macd_s = last["MACD_S"]
+
+            trend = 4 if close > sma20 > sma50 else (
+                -4 if close < sma20 < sma50 else 0)
+            momentum = 2 if macd_h > macd_s and rsi > rsi_s else (
+                -2 if macd_h < macd_s and rsi < rsi_s else 0)
+            momentum_decay = -1 if macd_h < macd_s and close > sma20 else 0
+            dist_sma20 = (close - sma20) / sma20
+            timing = 2 if 0.0 <= dist_sma20 <= 0.05 else (
+                -2 if dist_sma20 > 0.12 else (-1 if dist_sma20 < -0.05 else 0))
+            rsi_risk = - \
+                1 if 70 < rsi <= 80 else (
+                    min(score, 5) if rsi > 80 else (1 if rsi < 30 else 0))
+            cci_logic = 1 if - \
+                100 < cci < 100 and cci > cci_s else (-2 if cci > 200 else (1 if cci < -200 else 0))
+            weekly_bonus = 1 if score >= 7 and (macd_h > 0 and rsi > 50) else 0
+            persistence_check = 0  # placeholder
+
+            components = {
+                "Trend": trend,
+                "Momentum": momentum,
+                "MomentumDecay": momentum_decay,
+                "Timing": timing,
+                "CCI_Logic": cci_logic,
+                "RSI_Risk": rsi_risk,
+                "WeeklyBonus": weekly_bonus,
+                "PersistenceCheck": persistence_check
+            }
+
+            return {"Score": score, "Components": components}
+
+        return {"Score": score}
+
     except Exception as e:
         return {"Score": 0, "Error": str(e)}
 
@@ -341,6 +345,7 @@ def run_scan(max_workers: Optional[int] = None) -> pd.DataFrame:
     if not paths:
         print(f"No CSV files found in {config.RAW_DIR}")
         return pd.DataFrame()
+
     results: list[ScanRow] = []
     with ProcessPoolExecutor(max_workers=max_workers) as ex:
         futures = {ex.submit(scan_one_file, p): p for p in paths}
@@ -349,15 +354,18 @@ def run_scan(max_workers: Optional[int] = None) -> pd.DataFrame:
                 results.append(fut.result())
             except:
                 continue
+
     out = pd.DataFrame([r.to_dict() for r in results])
     if out.empty:
         print("No results.")
         return out
+
     out = out.sort_values(["Score", "Ticker"], ascending=[
                           False, True]).reset_index(drop=True)
     stamp = datetime.now().strftime("%Y-%m-%d")
     out_path = os.path.join(config.LOGS_DIR, f"vibe_report_local_{stamp}.csv")
     out.to_csv(out_path, index=False)
+
     print(out.head(PRINT_TOP_N).to_markdown(index=False, floatfmt=".2f"))
     print(f"\n✅ Saved: {out_path}")
     return out

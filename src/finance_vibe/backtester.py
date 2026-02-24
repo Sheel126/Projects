@@ -19,11 +19,11 @@ except ImportError as e:
     sys.exit(1)
 
 
-def run_backtest(ticker):
-    print(f"\n" + "="*40)
-    print(f"📊 BACKTESTING: {ticker}")
-    print(f"Logic: Extension-Aware / RSI Caps")
-    print("="*40)
+def run_backtest(ticker: str):
+    print("\n" + "="*80)
+    print(f"📊 BACKTESTING: {ticker} (Weekly/5Y)")
+    print("Logic: Extension-Aware / RSI Caps / Weekly Bonus / Component Debugging")
+    print("="*80)
 
     data_path = config.get_raw_path(ticker)
     if not os.path.exists(data_path):
@@ -34,7 +34,6 @@ def run_backtest(ticker):
     df.columns = [c.strip().capitalize() for c in df.columns]
     date_col = next(
         (c for c in df.columns if 'Date' in c or 'Datetime' in c), None)
-
     df[date_col] = pd.to_datetime(df[date_col])
     df.set_index(date_col, inplace=True)
     df = df.sort_index()
@@ -52,21 +51,30 @@ def run_backtest(ticker):
         window = df.loc[:current_date]
 
         try:
-            result = calculate_vibe_score(ticker, window)
-            score = result.get('Score', 0)
+            # Use the new component-aware function
+            result = calculate_vibe_score(
+                ticker, window, return_components=True)
+            score = result.get("Score", 0)
+            components = result.get("Components", {})
             scores_seen.append(score)
-        except Exception:
+        except Exception as e:
+            print(f"[{current_date.date()}] ❌ Error calculating score: {e}")
             continue
 
         price = test_df['Close'].iloc[i]
 
-        # BUY: If score hits Starter Position (7+)
+        # Print full component breakdown for debugging
+        comp_str = " | ".join(f"{k}:{v}" for k, v in components.items())
+        print(
+            f"[{current_date.date()}] Score: {score} | {comp_str} | Close: ${price:,.2f}")
+
+        # BUY: Score hits Starter Position or higher
         if score >= config.BACKTEST_BUY_SCORE and cash > 0:
             holdings = cash / price
             cash = 0
             print(f"[{current_date.date()}] 🟢 BUY  @ ${price:,.2f} | Score: {score}")
 
-        # SELL: If score drops to No Edge/Bearish (<= 1)
+        # SELL: Score drops to No Edge / Bearish
         elif score <= config.BACKTEST_SELL_SCORE and holdings > 0:
             cash = holdings * price
             holdings = 0
@@ -78,13 +86,13 @@ def run_backtest(ticker):
     final_val = cash if holdings == 0 else holdings * final_price
     total_return = ((final_val - initial_capital) / initial_capital) * 100
 
-    print("-" * 40)
+    print("-"*80)
     if scores_seen:
         print(
             f"Score Range: Min {min(scores_seen)} | Max {max(scores_seen)} | Avg {np.mean(scores_seen):.1f}")
     print(f"FINAL VALUE:  ${final_val:,.2f}")
     print(f"TOTAL RETURN: {total_return:.2f}%")
-    print("-" * 40)
+    print("-"*80)
 
 
 if __name__ == "__main__":
