@@ -18,7 +18,8 @@ def run_workflow():
     scripts = [
         "src/finance_vibe/ticker_provider.py",
         "src/finance_vibe/data_ingestor.py",
-        "src/finance_vibe/analysis_engine_local.py"
+        "src/finance_vibe/analysis_engine_local.py",
+        "src/finance_vibe/swing_scanner.py"
     ]
 
     print(f"🚀 Starting Finance-Vibe Pipeline...")
