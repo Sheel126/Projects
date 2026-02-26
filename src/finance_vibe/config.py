@@ -7,8 +7,8 @@ _CONFIG_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(_CONFIG_DIR, "../.."))
 
 # --- 2. API PARAMETERS ---
-PERIOD = "10d"
-INTERVAL = "30m"
+PERIOD = "5y"
+INTERVAL = "1wk"
 
 # --- 3. TICKER LISTS ---
 STATIC_TICKERS = ["SPY", "QQQ", "IWM", "SCHD"]
