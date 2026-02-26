@@ -1,4 +1,5 @@
-# Finance Vibe 📈  
+# Finance Vibe 📈
+
 ## Project Intent & Engineering Philosophy
 
 The **Finance Vibe** project is engineered as a **Modular Data Pipeline**.  
@@ -6,9 +7,9 @@ The intent is to transition from isolated "scripts" to a **Systematic Analysis E
 
 By decoupling **data ingestion**, **mathematical processing**, and **reporting layers**, we ensure the system is:
 
-- Idempotent  
-- Scalable  
-- Reproducible  
+- Idempotent
+- Scalable
+- Reproducible
 
 This project prioritizes:
 
@@ -23,7 +24,7 @@ The system operates within a stable **5-year weekly regime** to eliminate high-f
 
 ### Hermetic Environment (Dev Containers)
 
-We utilize **Docker-based Dev Containers** to enforce *Environment-as-Code*.
+We utilize **Docker-based Dev Containers** to enforce _Environment-as-Code_.
 
 This approach:
 
@@ -39,19 +40,19 @@ The environment becomes a **disposable, reproducible artifact**.
 
 The repository architecture enforces a strict boundary between:
 
-- `/src/` — Application logic  
-- `/data/` — System state  
+- `/src/` — Application logic
+- `/data/` — System state
 
 Within `/data/`:
 
-- `/raw/` — Immutable source data  
-- `/logs/` — Analytical output  
+- `/raw/` — Immutable source data
+- `/logs/` — Analytical output
 
 This isolation ensures:
 
-- The pipeline can be audited independently  
-- Data can be wiped without risking the codebase  
-- Code and state remain cleanly separated  
+- The pipeline can be audited independently
+- Data can be wiped without risking the codebase
+- Code and state remain cleanly separated
 
 ---
 
@@ -61,9 +62,9 @@ The system implements a **Dual-Engine Pattern** for logic verification.
 
 A **Shadow Engine** (`analysis_engine_local.py`) runs alongside the primary engine to enable:
 
-- Differential testing  
-- Safe mathematical experimentation  
-- Validation of scoring changes  
+- Differential testing
+- Safe mathematical experimentation
+- Validation of scoring changes
 
 This is particularly important for validating our **Manual Mean Absolute Deviation (MAD)** implementation before promoting changes to the main pipeline.
 
@@ -99,43 +100,48 @@ This project uses a **Composite Vibe Score** to identify high-conviction trends 
 src/finance_vibe/
 ```
 
-## Core Python Logic
+### Core Python Logic
 
-- **config.py** — Central settings (5y Weekly data, Static ETFs, Paths)  
-- **ticker_provider.py** — Merges top active stocks with benchmark ETFs (SPY, QQQ, IWM)  
-- **data_ingestor.py** — Pulls 5 years of weekly historical data  
-- **analysis_engine.py** — The Math Engine -uses pandas and Pandas ta to calculate (SMA, MACD, RSI, and Robust CCI)  
-- **analysis_engine_local.py** - This uses local python code to generate (SMA, MACD, RSI, and Robust CCI)
-- **run_vibe.py** — Master script to run the full pipeline  
+- **config.py** — Central settings (5y weekly data, ETFs, paths)
+- **ticker_provider.py** — Refreshes active stocks & benchmark ETFs (SPY, QQQ, IWM)
+- **data_ingestor.py** — Pulls 5-year weekly historical data
+- **analysis_engine.py** — Primary math engine (SMA, MACD, RSI, Robust CCI)
+- **analysis_engine_local.py** — Shadow engine for validation
+- **swing_scanner.py** — Filters valid swing trade setups using EMA, RSI, ATR, and MACD
+- **trade_planner.py** — Generates detailed trade plans including stock entries, stops, targets, and LEAPS options recommendations
+- **run_vibe.py** — Master orchestrator to execute the full pipeline
 
 ```
 data/
 ```
 
-- **raw/** — Original CSV files (Ignored by Git)  
-- **logs/** — Archive for dated Vibe Reports (CSV format)  
+- **raw/** — Original CSV files (Ignored by Git)
+- **logs/** — Archive for dated Vibe Reports (CSV format)
 
 ```
 notebooks/
 ```
 
-- Jupyter notebooks for data exploration  
+- Jupyter notebooks for data exploration
 
 ---
 
 # 🚀 How to Use
 
 ## Run in Github CodeSpaces
+
 - Easiest way to run and try it out is github codespaces
 - See documents attached in repo
 - https://github.com/jigar3730/finance-vibe/blob/main/How%20to%20run%20in%20Github%20codespaces.docx
+
 ## 1️⃣ Open in Dev Container
 
 Ensure Docker is running.
 
 Reopen the project in the container to auto-install:
-- Python 3.12  
-- Pandas  
+
+- Python 3.12
+- Pandas
 - Required extensions (Rainbow CSV, Excel Viewer)
 
 ---
@@ -150,13 +156,26 @@ python src/finance_vibe/run_vibe.py
 
 ---
 
+## 📊 Finance Vibe Pipeline Diagram
+
+````mermaid
+flowchart LR
+    A[Raw CSV Data<br>(data/raw/)] --> B[Ticker Provider<br>(ticker_provider.py)]
+    B --> C[Data Ingestor<br>(data_ingestor.py)]
+    C --> D[Primary Engine<br>(analysis_engine.py)]
+    C --> E[Shadow Engine<br>(analysis_engine_local.py)]
+    D --> F[Swing Scanner<br>(swing_scanner.py)]
+    E --> F
+    F --> G[Trade Planner<br>(trade_planner.py)]
+    G --> H[Trade Plan CSV<br>(data/logs/trade_plan_YYYY-MM-DD.csv)]
+
 ## 3️⃣ Reset Data
 
 To clear out old raw files and force a fresh fetch:
 
 ```bash
 rm data/raw/*.csv
-```
+````
 
 ---
 
@@ -168,21 +187,21 @@ The core **Actionable Logic** is driven by a **Weighted Scoring System (-10 to +
 
 ## 📊 Scoring Matrix
 
-| Indicator  | Logic | Weight |
-|------------|--------|--------|
-| **Trend** | Price > SMA(20) > SMA(50) | ±4.0 Points |
-| **Momentum** | MACD Histogram & RSI > their 20-EMAs | ±3.0 Points |
-| **Volatility** | Robust CCI > 0 and > its 20-EMA | ±3.0 Points |
+| Indicator      | Logic                                | Weight      |
+| -------------- | ------------------------------------ | ----------- |
+| **Trend**      | Price > SMA(20) > SMA(50)            | ±4.0 Points |
+| **Momentum**   | MACD Histogram & RSI > their 20-EMAs | ±3.0 Points |
+| **Volatility** | Robust CCI > 0 and > its 20-EMA      | ±3.0 Points |
 
 ---
 
 ## 🎯 Action Tiers
 
-- 🔥 **GO ALL IN** (Score 8 to 10) — Maximum bullish confluence  
-- ✅ **ACCUMULATE** (Score 4 to 7) — Positive trend and momentum  
-- ⏳ **WAIT / CASH** (Score -3 to 3) — Neutral zone; no clear edge  
-- ⚠️ **DISTRIBUTE** (Score -4 to -7) — Bearish divergence or weakening trend  
-- 🚫 **AVOID** (Score -8 to -10) — High-conviction bearish trend  
+- 🔥 **GO ALL IN** (Score 8 to 10) — Maximum bullish confluence
+- ✅ **ACCUMULATE** (Score 4 to 7) — Positive trend and momentum
+- ⏳ **WAIT / CASH** (Score -3 to 3) — Neutral zone; no clear edge
+- ⚠️ **DISTRIBUTE** (Score -4 to -7) — Bearish divergence or weakening trend
+- 🚫 **AVOID** (Score -8 to -10) — High-conviction bearish trend
 
 ---
 
@@ -210,6 +229,6 @@ for historical tracking.
 
 # 📝 Future Roadmap
 
-- [ ] **Automation** — Set cron to execute `run_vibe.py` every Saturday at 09:00  
-- [ ] **Alerting** — Integrate Discord/Telegram Webhooks for high-score signals  
+- [ ] **Automation** — Set cron to execute `run_vibe.py` every Saturday at 09:00
+- [ ] **Alerting** — Integrate Discord/Telegram Webhooks for high-score signals
 - [ ] **Visualization** — Add Matplotlib logic to generate "Vibe Charts" (Price vs. Score)
