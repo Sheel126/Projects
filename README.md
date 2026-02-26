@@ -158,16 +158,43 @@ python src/finance_vibe/run_vibe.py
 
 ## 📊 Finance Vibe Pipeline Diagram
 
-````mermaid
+## 📊 Finance Vibe Pipeline (Enhanced)
+
+```mermaid
 flowchart LR
-    A[Raw CSV Data<br>(data/raw/)] --> B[Ticker Provider<br>(ticker_provider.py)]
-    B --> C[Data Ingestor<br>(data_ingestor.py)]
-    C --> D[Primary Engine<br>(analysis_engine.py)]
-    C --> E[Shadow Engine<br>(analysis_engine_local.py)]
-    D --> F[Swing Scanner<br>(swing_scanner.py)]
+    %% Raw Data
+    A["Raw CSV Data (data/raw)"]:::raw --> B["Ticker Provider (ticker_provider.py)"]:::process
+
+    %% Ingestion
+    B --> C["Data Ingestor (data_ingestor.py)"]:::process
+
+    %% Analysis Engines
+    C --> D["Primary Engine (analysis_engine.py)"]:::primary
+    C --> E["Shadow Engine (analysis_engine_local.py)"]:::shadow
+
+    %% Swing Scanner
+    D --> F["Swing Scanner (swing_scanner.py)"]:::scanner
     E --> F
-    F --> G[Trade Planner<br>(trade_planner.py)]
-    G --> H[Trade Plan CSV<br>(data/logs/trade_plan_YYYY-MM-DD.csv)]
+
+    %% Decision Branch
+    F --> G{"Setup Type?"}:::decision
+    G -->|Bullish| H["Trade Planner (trade_planner.py)\nLong Stock / LEAPS Calls"]:::bull
+    G -->|Bearish| I["Trade Planner (trade_planner.py)\nShort Stock / Puts"]:::bear
+
+    %% Output
+    H --> J["Trade Plan CSV (data/logs/trade_plan_YYYY-MM-DD.csv)"]:::output
+    I --> J
+
+    %% Styling
+    classDef raw fill:#f9f,stroke:#333,stroke-width:1px
+    classDef process fill:#bbf,stroke:#333,stroke-width:1px
+    classDef primary fill:#cfc,stroke:#333,stroke-width:1px
+    classDef shadow fill:#ffc,stroke:#333,stroke-width:1px
+    classDef scanner fill:#fcf,stroke:#333,stroke-width:1px
+    classDef decision fill:#fff3cd,stroke:#f0ad4e,stroke-width:2px,stroke-dasharray: 5 5
+    classDef bull fill:#c6efce,stroke:#2e7d32,stroke-width:2px
+    classDef bear fill:#f8d7da,stroke:#c62828,stroke-width:2px
+    classDef output fill:#d0ebff,stroke:#1565c0,stroke-width:2px
 
 ## 3️⃣ Reset Data
 
