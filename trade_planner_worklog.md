@@ -76,14 +76,11 @@ Build a **systematic trade planner** to work with swing scanner outputs and gene
 **Summary:**  
 By the end of today, we built a **deterministic trade planner** that automatically reads scanner results, calculates stock entries/stops/targets, and prepares LEAPS options suggestions, while fully parameterizing input/output and preparing the system for portfolio-level risk management.
 
-#Sample output
+### Sample output
+
 Symbol,Setup Type,Stock Entry,Stock Stop,Target 1,Target 2,LEAPS Type,LEAPS Expiry Min,LEAPS Expiry Max,Suggested Delta,Risk Notes
 INTC,SETUP_LONG,46.28,43.09,48.92,51.56,CALL,Feb-2027,Feb-2028,0.65 – 0.8,Stop based on EMA50; adjust if invalidated
-
 IWM,SETUP_LONG,263.32,256.41,268.36,273.4,CALL,Feb-2027,Feb-2028,0.65 – 0.8,Stop based on EMA50; adjust if invalidated
-
 PSTG,SETUP_LONG,73.53,65.43,81.23,88.93,CALL,Feb-2027,Feb-2028,0.65 – 0.8,Stop based on EMA50; adjust if invalidated
-
 SPY,SETUP_LONG,691.16,681.57,699.13,707.1,CALL,Feb-2027,Feb-2028,0.65 – 0.8,Stop based on EMA50; adjust if invalidated
-
 XLC,SETUP_LONG,116.17,115.41,117.68,119.19,CALL,Feb-2027,Feb-2028,0.65 – 0.8,Stop based on EMA50; adjust if invalidated
