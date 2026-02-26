@@ -187,21 +187,36 @@ The core **Actionable Logic** is driven by a **Weighted Scoring System (-10 to +
 
 ## 📊 Scoring Matrix
 
-| Indicator      | Logic                                | Weight      |
-| -------------- | ------------------------------------ | ----------- |
-| **Trend**      | Price > SMA(20) > SMA(50)            | ±4.0 Points |
-| **Momentum**   | MACD Histogram & RSI > their 20-EMAs | ±3.0 Points |
-| **Volatility** | Robust CCI > 0 and > its 20-EMA      | ±3.0 Points |
+| Indicator        | Logic                                                                 | Weight          |
+|-----------------|----------------------------------------------------------------------|----------------|
+| **Trend**        | Price in pullback zone near EMA20 **and** EMA50 is rising             | ±4.0 Points    |
+| **Momentum**     | MACD Histogram rising over last 2 bars (“momentum hook”) **and** RSI above/below EMA signal | ±3.0 Points    |
+| **Volatility**   | Robust CCI > 0 and above its 20-EMA for longs, < 0 for shorts        | ±3.0 Points    |
+| **RSI Confluence** | RSI in optimized range: 50–65 for long pullbacks, 35–50 for shorts | ±2.0 Points    |
+| **Pullback Quality** | Price not too far above EMA20 (e.g., ≤2% above) for long, or ≤2% below for short | ±2.0 Points    |
 
 ---
 
-## 🎯 Action Tiers
+## 🎯 Action Tiers & Sentiment Mapping (Updated)
 
-- 🔥 **GO ALL IN** (Score 8 to 10) — Maximum bullish confluence
-- ✅ **ACCUMULATE** (Score 4 to 7) — Positive trend and momentum
-- ⏳ **WAIT / CASH** (Score -3 to 3) — Neutral zone; no clear edge
-- ⚠️ **DISTRIBUTE** (Score -4 to -7) — Bearish divergence or weakening trend
-- 🚫 **AVOID** (Score -8 to -10) — High-conviction bearish trend
+The `sentiment_action(score: int)` function maps the **Composite Vibe Score** to clear trading guidance:
+
+| Score Range | Sentiment  | Action Description                       | Notes |
+|-------------|-----------|-----------------------------------------|-------|
+| 9+          | Bullish   | 🟢 STARTER + ADD ON PULLBACK            | Strong pullback near EMA20, EMA50 rising, momentum hook confirmed, RSI optimal |
+| 7 – 8       | Bullish   | 🟢 STARTER POSITION                      | Pullback in zone, trend mostly bullish, momentum improving |
+| 5 – 6       | Positive  | 📈 WATCH / SCALE IN                      | Minor pullback, trend positive, momentum emerging |
+| 2 – 4       | Neutral   | ⏳ WAIT                                  | Pullback not ideal, EMA50 slope weak, momentum unclear, RSI moderate |
+| -1 – 1      | Neutral   | 💤 NO EDGE                               | Market indecisive, no clear bias |
+| -4 – -2     | Bearish   | 🟠 REDUCE / HEDGE                        | Weakening trend, EMA50 flat/declining, momentum negative |
+| < -4        | Bearish   | 🔴 AVOID / SHORT BIAS                     | Strong bearish confluence, trend down, momentum confirmed |
+
+**Key Points:**
+
+1. **Bullish tiers** encourage scaling in and adding on pullbacks when trend and momentum align.  
+2. **Neutral tiers** indicate indecision — best to wait or hold cash.  
+3. **Bearish tiers** signal reducing positions or considering short bias.  
+4. The function integrates **EMA slope, pullback zones, MACD momentum hooks, and RSI ranges** for precise decision-making.
 
 ---
 
