@@ -155,9 +155,6 @@ python src/finance_vibe/run_vibe.py
 ```
 
 ---
-
-## 📊 Finance Vibe Pipeline Diagram
-
 ## 📊 Finance Vibe Pipeline (Enhanced)
 
 ```mermaid
