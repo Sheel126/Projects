@@ -155,19 +155,45 @@ python src/finance_vibe/run_vibe.py
 ```
 
 ---
+## 📊 Finance Vibe Pipeline Overview
 
-## 📊 Finance Vibe Pipeline Diagram
+The pipeline runs as a **modular data workflow** from raw data to actionable trade plans:
 
-````mermaid
-flowchart LR
-    A[Raw CSV Data<br>(data/raw/)] --> B[Ticker Provider<br>(ticker_provider.py)]
-    B --> C[Data Ingestor<br>(data_ingestor.py)]
-    C --> D[Primary Engine<br>(analysis_engine.py)]
-    C --> E[Shadow Engine<br>(analysis_engine_local.py)]
-    D --> F[Swing Scanner<br>(swing_scanner.py)]
-    E --> F
-    F --> G[Trade Planner<br>(trade_planner.py)]
-    G --> H[Trade Plan CSV<br>(data/logs/trade_plan_YYYY-MM-DD.csv)]
+1. **Raw Data** (`data/raw/`)  
+   - Contains 5-year weekly OHLCV CSV files for all tracked tickers.
+
+2. **Ticker Provider** (`ticker_provider.py`)  
+   - Refreshes the list of active tickers and benchmarks (SPY, QQQ, IWM).
+
+3. **Data Ingestor** (`data_ingestor.py`)  
+   - Pulls historical data for all tickers.  
+   - Saves updated CSV files in `/data/raw/`.
+
+4. **Primary Engine** (`analysis_engine.py`)  
+   - Calculates SMA20, SMA50, MACD Histogram, RSI, and Robust CCI.  
+   - Generates the **Composite Vibe Score** for each ticker.
+
+5. **Shadow Engine** (`analysis_engine_local.py`)  
+   - Runs a secondary/local calculation to verify the primary engine.  
+   - Ensures scoring consistency and safe experimentation.
+
+6. **Swing Scanner** (`swing_scanner.py`)  
+   - Filters tickers for actionable setups:  
+     - **SETUP_LONG**: Pullbacks into EMA20 with bullish momentum.  
+     - **SETUP_SHORT**: Pullbacks into EMA20 with bearish momentum.  
+   - Generates a **swing setups CSV** (`data/logs/swing_setups_YYYY-MM-DD.csv`) for review.
+
+7. **Trade Planner** (`trade_planner.py`)  
+   - Reads the filtered swing setups.  
+   - Calculates **entry, exit, stop-loss**, and **LEAPS options** for each setup.  
+   - Outputs the **final trade plan CSV** (`data/logs/trade_plan_YYYY-MM-DD.csv`).
+
+---
+
+**Summary:**  
+- This pipeline ensures a **transparent, reproducible, and auditable workflow**.  
+- Each stage produces outputs that feed the next stage, allowing clear **traceability from raw data → Vibe → Swing Setups → Trade Plan**.  
+- The modular design makes it easy to **extend, test, or automate** in a Dockerized environment.
 
 ## 3️⃣ Reset Data
 
