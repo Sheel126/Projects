@@ -155,43 +155,45 @@ python src/finance_vibe/run_vibe.py
 ```
 
 ---
-## 📊 Finance Vibe Pipeline (Enhanced)
+## 📊 Finance Vibe Pipeline Overview
 
-```mermaid
-flowchart LR
-    %% Raw Data
-    A["Raw CSV Data (data/raw)"]:::raw --> B["Ticker Provider (ticker_provider.py)"]:::process
+The pipeline runs as a **modular data workflow** from raw data to actionable trade plans:
 
-    %% Ingestion
-    B --> C["Data Ingestor (data_ingestor.py)"]:::process
+1. **Raw Data** (`data/raw/`)  
+   - Contains 5-year weekly OHLCV CSV files for all tracked tickers.
 
-    %% Analysis Engines
-    C --> D["Primary Engine (analysis_engine.py)"]:::primary
-    C --> E["Shadow Engine (analysis_engine_local.py)"]:::shadow
+2. **Ticker Provider** (`ticker_provider.py`)  
+   - Refreshes the list of active tickers and benchmarks (SPY, QQQ, IWM).
 
-    %% Swing Scanner
-    D --> F["Swing Scanner (swing_scanner.py)"]:::scanner
-    E --> F
+3. **Data Ingestor** (`data_ingestor.py`)  
+   - Pulls historical data for all tickers.  
+   - Saves updated CSV files in `/data/raw/`.
 
-    %% Decision Branch
-    F --> G{"Setup Type?"}:::decision
-    G -->|Bullish| H["Trade Planner (trade_planner.py)\nLong Stock / LEAPS Calls"]:::bull
-    G -->|Bearish| I["Trade Planner (trade_planner.py)\nShort Stock / Puts"]:::bear
+4. **Primary Engine** (`analysis_engine.py`)  
+   - Calculates SMA20, SMA50, MACD Histogram, RSI, and Robust CCI.  
+   - Generates the **Composite Vibe Score** for each ticker.
 
-    %% Output
-    H --> J["Trade Plan CSV (data/logs/trade_plan_YYYY-MM-DD.csv)"]:::output
-    I --> J
+5. **Shadow Engine** (`analysis_engine_local.py`)  
+   - Runs a secondary/local calculation to verify the primary engine.  
+   - Ensures scoring consistency and safe experimentation.
 
-    %% Styling
-    classDef raw fill:#f9f,stroke:#333,stroke-width:1px
-    classDef process fill:#bbf,stroke:#333,stroke-width:1px
-    classDef primary fill:#cfc,stroke:#333,stroke-width:1px
-    classDef shadow fill:#ffc,stroke:#333,stroke-width:1px
-    classDef scanner fill:#fcf,stroke:#333,stroke-width:1px
-    classDef decision fill:#fff3cd,stroke:#f0ad4e,stroke-width:2px,stroke-dasharray: 5 5
-    classDef bull fill:#c6efce,stroke:#2e7d32,stroke-width:2px
-    classDef bear fill:#f8d7da,stroke:#c62828,stroke-width:2px
-    classDef output fill:#d0ebff,stroke:#1565c0,stroke-width:2px
+6. **Swing Scanner** (`swing_scanner.py`)  
+   - Filters tickers for actionable setups:  
+     - **SETUP_LONG**: Pullbacks into EMA20 with bullish momentum.  
+     - **SETUP_SHORT**: Pullbacks into EMA20 with bearish momentum.  
+   - Generates a **swing setups CSV** (`data/logs/swing_setups_YYYY-MM-DD.csv`) for review.
+
+7. **Trade Planner** (`trade_planner.py`)  
+   - Reads the filtered swing setups.  
+   - Calculates **entry, exit, stop-loss**, and **LEAPS options** for each setup.  
+   - Outputs the **final trade plan CSV** (`data/logs/trade_plan_YYYY-MM-DD.csv`).
+
+---
+
+**Summary:**  
+- This pipeline ensures a **transparent, reproducible, and auditable workflow**.  
+- Each stage produces outputs that feed the next stage, allowing clear **traceability from raw data → Vibe → Swing Setups → Trade Plan**.  
+- The modular design makes it easy to **extend, test, or automate** in a Dockerized environment.
 
 ## 3️⃣ Reset Data
 
