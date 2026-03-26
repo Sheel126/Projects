@@ -1,6 +1,27 @@
+from pathlib import Path
+import shutil
 import subprocess
 import sys
 import os
+
+
+def clean_raw_folder(root_dir):
+    raw_dir = Path(root_dir) / "data" / "raw"
+
+    if not raw_dir.exists():
+        print("⚠️ Raw folder does not exist. Skipping cleanup.")
+        return
+
+    for item in raw_dir.iterdir():
+        try:
+            if item.is_file() or item.is_symlink():
+                item.unlink()
+            elif item.is_dir():
+                shutil.rmtree(item)
+        except Exception as e:
+            print(f"Failed to delete {item}: {e}")
+
+    print("🧹 Raw folder cleaned.\n")
 
 
 def run_workflow():
@@ -18,12 +39,17 @@ def run_workflow():
     scripts = [
         "src/finance_vibe/ticker_provider.py",
         "src/finance_vibe/data_ingestor.py",
-        "src/finance_vibe/analysis_engine_local.py",
-        "src/finance_vibe/swing_scanner.py"
+        # "src/finance_vibe/analysis_engine_local.py",
+        "src/finance_vibe/swing_scanner.py",
+        "src/finance_vibe/trade_planner.py",
+        "src/finance_vibe/trade_plan_helper.py",
+
+
     ]
 
     print(f"🚀 Starting Finance-Vibe Pipeline...")
     print(f"📍 Project Root: {ROOT_DIR}\n")
+    clean_raw_folder(ROOT_DIR)
 
     for script in scripts:
         # Construct the absolute path to each script from the Project Root
