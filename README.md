@@ -18,6 +18,9 @@ A modular Python pipeline that fetches stock data from Yahoo Finance and scores 
 - **AI Review Step** – Optional AI-written review for each trade plan row, outputting enriched CSV and JSON reports
 - **Hermetic Environment** – Docker Dev Containers lock Python 3.12 and all dependencies for full reproducibility
 
+### 👥 Collaboration
+- Collaborative project with contributions to key features of the pipeline.
+
 ---
 
 # 📈 FinSight AI
