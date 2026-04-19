@@ -39,8 +39,9 @@ def run_workflow():
     scripts = [
         "src/finance_vibe/ticker_provider.py",
         "src/finance_vibe/data_ingestor.py",
-        # "src/finance_vibe/analysis_engine_local.py",
-        "src/finance_vibe/swing_scanner.py",
+        "src/finance_vibe/analysis_engine.py",
+        "src/finance_vibe/analysis_engine_local.py",
+        #"src/finance_vibe/swing_scanner.py",
         "src/finance_vibe/trade_planner.py",
         "src/finance_vibe/trade_plan_helper.py",
 
@@ -64,6 +65,15 @@ def run_workflow():
         except subprocess.CalledProcessError:
             print(f"❌ Error in {script}. Pipeline halted.")
             sys.exit(1)
+
+    if os.getenv("FINANCE_VIBE_ENABLE_AI_REVIEW", "0") == "1":
+        ai_script = os.path.join(ROOT_DIR, "src", "finance_vibe", "ai_reviewer.py")
+        print("🔹 Running optional AI review...")
+        try:
+            subprocess.run([sys.executable, ai_script], check=True, env=env, cwd=ROOT_DIR)
+            print("✅ Finished: src/finance_vibe/ai_reviewer.py\n")
+        except subprocess.CalledProcessError:
+            print("⚠️ AI review step failed. Core pipeline outputs are still available.\n")
 
     print("🏁 Workflow Complete!")
     print(f"📁 Reports saved to: {os.path.join(ROOT_DIR, 'data/logs/')}")

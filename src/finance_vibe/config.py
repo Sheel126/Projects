@@ -38,7 +38,21 @@ BACKTEST_INITIAL_CAPITAL = 10000
 BACKTEST_BUY_SCORE = 7   # "🟢 STARTER POSITION"
 BACKTEST_SELL_SCORE = 1  # Exit when it hits "NO EDGE" or "REDUCE"
 
-# --- 7. DIRECTORY INITIALIZATION ---
+# --- 7. OPTIONAL AI / NEWS REVIEW SETTINGS ---
+ENABLE_AI_REVIEW = os.getenv("FINANCE_VIBE_ENABLE_AI_REVIEW", "0") == "1"
+# 0 means "no cap" (process all rows from the chosen input source).
+AI_MAX_TICKERS_PER_RUN = int(os.getenv("FINANCE_VIBE_AI_MAX_TICKERS", "0"))
+AI_BATCH_SIZE = int(os.getenv("FINANCE_VIBE_AI_BATCH_SIZE", "5"))
+AI_MAX_RETRIES = int(os.getenv("FINANCE_VIBE_AI_MAX_RETRIES", "2"))
+AI_REQUEST_TIMEOUT = int(os.getenv("FINANCE_VIBE_AI_TIMEOUT_SECONDS", "45"))
+AI_MODEL = os.getenv("FINANCE_VIBE_AI_MODEL", "gpt-4.1-mini")
+NEWS_MAX_HEADLINES_PER_TICKER = int(
+    os.getenv("FINANCE_VIBE_NEWS_MAX_HEADLINES", "3")
+)
+NEWS_LOOKBACK_DAYS = int(os.getenv("FINANCE_VIBE_NEWS_LOOKBACK_DAYS", "5"))
+NEWS_SLEEP_SECONDS = float(os.getenv("FINANCE_VIBE_NEWS_SLEEP_SECONDS", "0.5"))
+
+# --- 8. DIRECTORY INITIALIZATION ---
 # This ensures folders exist relative to the project root
 os.makedirs(RAW_DIR, exist_ok=True)
 os.makedirs(LOGS_DIR, exist_ok=True)

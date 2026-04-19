@@ -1,5 +1,11 @@
 # Finance Vibe 📈
 
+## Trader-first docs (start here)
+
+If you’re using this as a trader and want the outputs to “make sense” (without caring about the code), read:
+
+- `TRADER_GUIDE.md`
+
 ## Project Intent & Engineering Philosophy
 
 The **Finance Vibe** project is engineered as a **Modular Data Pipeline**.  
@@ -152,6 +158,25 @@ Execute the master command to ingest data and run analysis:
 
 ```bash
 python src/finance_vibe/run_vibe.py
+```
+
+### Optional AI Review Step
+
+If you want an AI-written review for each trade-plan row, run:
+
+```bash
+python src/finance_vibe/ai_reviewer.py
+```
+
+This reads the latest trade plan in `data/logs/`, optionally enriches it with news/event data, and writes:
+
+- `data/logs/trade_plan_ai_YYYY-MM-DD.csv`
+- `data/logs/trade_plan_ai_YYYY-MM-DD.json`
+
+You can also enable this automatically at the end of the main pipeline:
+
+```bash
+FINANCE_VIBE_ENABLE_AI_REVIEW=1 python src/finance_vibe/run_vibe.py
 ```
 
 ---
