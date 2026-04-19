@@ -1,0 +1,16 @@
+version: "3.9"
+services:
+  postgres:
+    image: postgres:15
+    container_name: finance-ai-postgres
+    environment:
+      POSTGRES_USER: financeuser
+      POSTGRES_PASSWORD: financepass
+      POSTGRES_DB: finance_ai
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:

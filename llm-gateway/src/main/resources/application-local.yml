@@ -1,0 +1,9 @@
+# Relaxed health details for local development
+management:
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    com.llmgateway: DEBUG

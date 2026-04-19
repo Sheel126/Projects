@@ -1,0 +1,16 @@
+{
+    "name": "Movemate",
+    "short_name": "Movemate",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#fff",
+    "theme_color": "#000",
+    "scope": "/",
+    "icons": [
+        {
+            "src": "./images/rope1.svg",
+            "sizes": "any",
+            "type": "image/svg+xml"
+        }
+    ]
+}

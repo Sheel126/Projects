@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html>
+<!--- Header information about the page -->
+<body>
+	<div layout:fragment="content">
+		<script	src="https://ajax.googleapis.com/ajax/libs/angularjs/1.6.4/angular.js"></script>
+		<script>
+			/* Without these comments, Thymeleaf will try to parse the Javascript as XML and break itself sometimes */
+			/*<![CDATA[*/ 
+			var app = angular.module('myApp', []);
+			app.controller('populateCtrl', function($scope, $http, $q) {
+
+				/* Logic that handles controlling your page goes here */
+				let x = 5;
+				let y = 10;
+				$scope.sum = (x + y);
+				console.log($scope.x);
+				$scope.x2;
+				
+				$scope.myFunction = function () {
+				    $scope.sum += 1;
+				    console.log($scope.sum);
+				    //console.log($scope.x2);
+				}
+				
+				$scope.math = function (a,b) {
+					return 5*a - b;
+				}
+				
+				$scope.talk = function () {
+					return "hello";
+				}
+				
+				$scope.timeIntervals = [
+					{value: 1, display: 'Daily'},
+					{value: 2, display: 'Weekly'},
+					{value: 3, display: 'Monthly'},
+					{value: 4, display: 'Annual'}
+				];
+				
+				$scope.branches = ["development", "frontend-data-entry", "backend", "developmentT2", 
+					"developmentT1", "main", "kpresle-test", "kpresle-test-2", "frontend-display"];
+				
+				$scope.commitData = {
+				        "Kai Presler-Marshall (kpresle@ncsu.edu)":
+				            [
+				                { "count": 0, "display": "01/03/2020 00:00", "timestamp": 1583038800000 },
+				                { "count": 0, "display": "03/03/2020 00:00", "timestamp": 1583211600000 }
+				            ],
+				        "Sara Ghodsi (sghodsi@ncsu.edu)":
+				            [
+				                { "count": 0, "display": "01/03/2020 00:00", "timestamp": 1583038800000 },
+				                { "count": 0, "display": "03/03/2020 00:00", "timestamp": 1583211600000 },
+				                { "count": 0, "display": "05/03/2020 00:00", "timestamp": 1583384400000 }
+				            ]
+				    };
+				
+				$scope.messages = [];
+
+			    $scope.addMessage = function() {
+			        $scope.messages.push({ text: '', number: '' });
+			        console.log($scope.messages);
+			    };
+			    
+			    
+
+
+			});
+			
+			
+
+			
+			/* Without these comments, Thymeleaf will try to parse the Javascript as XML and break itself sometimes */
+			/*]]>*/
+		</script>
+
+		<div ng-app="myApp" ng-controller="populateCtrl">
+
+			<!--- Various HTML elements, with extra tags telling Angular how to work with them, go here -->
+			<button ng-click="myFunction()">DOES SOMETHING</button>
+			<input type="text" ng-model="x" required="true" />
+			<input type="text" ng-model="y" required="true" />
+			
+			The result is {{math(x,y)}}
+			<br>
+			Talk returns {{talk()}}
+			
+			<br>
+			<br>
+			Select time interval: <br />
+			<select ng-model="interval"
+					ng-options="item as item.display for item in timeIntervals"
+					required="true">
+				<option value="">Select time interval for viewing data</option>
+			</select>
+			
+			<br>
+			<br>
+			(Optional) Select the branches to view <br />
+			<div ng-repeat="branch in branches track by $index">
+				<input type="checkbox"
+					ng-model="$parent.selectedBranches[branch]">
+				<tt> {{branch}}</tt> <!-- remove the extra spaces -->
+				</input>
+			</div>
+			
+			<br>
+			<br>
+			
+			<div ng-repeat="(user, commits) in commitData track by $index">
+				Commits for {{user}}:<br />
+				<div id="{ {user} }">
+					<li ng-repeat="commit in commits">{{commit.display}}</li>
+				</div>
+			</div>
+			
+			<br>
+			<br>
+			
+		        <button ng-click="addMessage()">Add</button>
+		        <div ng-repeat="message in messages">
+		            <form>
+		                <input type="text" ng-model="message.text">
+		                <input type="number" ng-model="message.number">
+		            </form>
+		        </div>
+		    			
+			
+			
+			
+			
+		</div>
+		
+	</div>
+
+</body>
+</html>

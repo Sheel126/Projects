@@ -1,0 +1,9 @@
+Django>=4.0,<5.0
+djangorestframework
+mysqlclient 
+django-cors-headers
+coverage
+mysql-connector-python==9.2.0
+openai
+requests
+Pillow

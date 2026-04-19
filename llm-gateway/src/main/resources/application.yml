@@ -1,0 +1,51 @@
+spring:
+  application:
+    name: llm-gateway
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/llmgateway}
+    username: ${DATABASE_USER:gateway}
+    password: ${DATABASE_PASSWORD:${POSTGRES_PASSWORD:gateway}}
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  data:
+    redis:
+      url: ${SPRING_DATA_REDIS_URL:${REDIS_URL:redis://localhost:6379}}
+
+server:
+  port: ${SERVER_PORT:8080}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: when_authorized
+  health:
+    redis:
+      enabled: true
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui
+
+llm:
+  openai:
+    base-url: ${OPENAI_BASE_URL:https://api.openai.com}
+    api-key: ${OPENAI_API_KEY:}
+  anthropic:
+    base-url: ${ANTHROPIC_BASE_URL:https://api.anthropic.com}
+    api-key: ${ANTHROPIC_API_KEY:}
+    version: ${ANTHROPIC_VERSION:2023-06-01}
+  gemini:
+    base-url: ${GEMINI_BASE_URL:https://generativelanguage.googleapis.com}
+    api-key: ${GEMINI_API_KEY:}
+
+logging:
+  level:
+    root: INFO
+    com.llmgateway: INFO

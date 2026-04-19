@@ -1,0 +1,16 @@
+# Compose overlay for running automated integration tests against a disposable stack.
+services:
+  app:
+    image: llm-gateway:test
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    environment:
+      SPRING_PROFILES_ACTIVE: test
+      DATABASE_URL: jdbc:postgresql://postgres:5432/llmgateway
+      DATABASE_USER: gateway
+      DATABASE_PASSWORD: test
+      SPRING_DATA_REDIS_URL: redis://redis:6379
+      OPENAI_API_KEY: test
+      ANTHROPIC_API_KEY: test
+      GEMINI_API_KEY: test

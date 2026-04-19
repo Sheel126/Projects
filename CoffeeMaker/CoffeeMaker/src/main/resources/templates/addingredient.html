@@ -1,0 +1,187 @@
+<!DOCTYPE HTML>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+<title>Add Ingredient</title>
+<style>
+input.ng-valid {
+	background-color: lightgreen;
+}
+
+input.ng-dirty.ng-invalid-required,
+input.ng-dirty.ng-invalid-pattern {
+	background-color: red;
+}
+
+input.ng-dirty.ng-invalid-min {
+	background-color: yellow;
+}
+</style>
+<link rel="stylesheet" href="css/bootstrap.css" />
+<link rel="stylesheet" href="css/app.css" />
+</head>
+<body>
+	<script
+		src="https://ajax.googleapis.com/ajax/libs/angularjs/1.6.4/angular.js"></script>
+
+	<script>
+		var app = angular.module('myApp', []);
+		app.controller('addIngredientCtrl', function($scope, $http, $q) {
+			console.log("Hit!");
+			$scope.promises = [];
+			
+			$scope.inputText = '';
+			$scope.inventory = {
+					ingredients: []
+			}
+			
+			$scope.convertToUpperCase = function(ingredient) {
+		        ingredient.ingredient = ingredient.ingredient.toUpperCase();
+		    };
+		    
+
+		    $scope.reset = function() {
+		        $scope.ingredients = [];
+		        
+		        $scope.success = false;
+				$scope.failure = false;
+
+		        if ($scope.ingredientForm) {
+		            $scope.ingredientForm.$setPristine();
+		            $scope.ingredientForm.$setUntouched(); 
+		        }
+		    };
+
+			$scope.ingredients = [];
+			$scope.inventoryToAdd = [];
+
+			$scope.addIngredient = function() {
+				$scope.ingredients.push({ ingredient: '', amount: 0 });
+				console.log($scope.ingredients);
+			}
+			
+			$scope.submit = function() {
+				$scope.success = true;
+				$scope.failure = false;
+				$scope.run = false;
+				
+				
+				// inventory is empty --> concotante it ig
+				
+				$scope.inventoryToAdd = $scope.inventoryToAdd.concat($scope.ingredients);
+				$scope.inventory.ingredients = [];
+				console.log($scope.inventory.ingredients);
+				$scope.inventory.ingredients = $scope.ingredients;
+				console.log($scope.inventory.ingredients);
+				
+				
+				
+				angular.forEach($scope.ingredients, function(ingredient) {
+					var promise = $http.post("/api/v1/ingredients", ingredient)
+						.then(function(response) {
+							console.log("Message Posted!");
+						}, function(rejection) {
+							$scope.success = false;
+				            $scope.failure = true;
+							console.error("Error: duplicate ingredient");
+						})
+						.finally(function() {
+							$scope.run = true;
+							$scope.success = !($scope.failure);
+							
+							
+							
+							
+							
+						});
+					$scope.promises.push(promise);
+						
+				});
+				
+				$q.all($scope.promises).then(function() {
+					if ($scope.success == true) {
+						console.log("here!!");
+						$http.put("/api/v1/inventory", $scope.inventory).then(
+								
+								function(response) {
+									//$scope.getInventory();
+								}, function(rejection) {
+									$scope.failure = true;
+									$scope.success = false;
+									console.error("Error while updating Inventory!");	
+								}
+								
+						);
+					}
+				})
+				
+				
+				
+				//$scope.reset();
+				$scope.reset();
+			}
+			
+			$scope.getInventory = function() {
+				$http.get("/api/v1/inventory").then(function(response) {
+					$scope.inventoryToAdd = response.data.ingredients;					
+					
+				}, function(rejection) {
+					console.error("Error while getting Inventory");
+				})
+			}
+			
+			$scope.getInventory();
+		});
+	</script>
+
+	<div ng-app="myApp" class="generic-container ng-cloak" ng-controller="addIngredientCtrl as ctrl">
+		<div class="panel panel-default">
+			<div class="panel-heading">
+				<span class="lead">Add Ingredient</span>
+			</div>
+			
+			<div ng-repeat="ingredient in ingredients">
+    			<form name="ingredientForm">
+        			<div class="row">
+            			<div class="form-group col-md-12">
+                			<label class="col-md-2 control-lable" for="file">Name</label>
+                			<div class="col-md-7">
+                    			<input type="text" ng-model="ingredient.ingredient" ng-change="convertToUpperCase(ingredient)" name="name" class="name form-control input-sm" placeholder="Enter name" required ng-pattern="/^[a-zA-Z]+$/">
+                    			<div class="has-error" ng-show="ingredientForm.name.$dirty && (ingredientForm.name.$error.required || ingredientForm.name.$error.pattern)">
+                        			<span ng-show="ingredientForm.name.$error.required">This is a required field.</span>
+                        			<span ng-show="ingredientForm.name.$error.pattern">Invalid field. Please enter only letters.</span>
+                    			</div>
+                			</div>
+            			</div>
+        			</div>
+
+        			<div class="row">
+            			<div class="form-group col-md-12">
+                			<label class="col-md-2 control-lable" for="file">Units</label>
+                			<div class="col-md-7">
+                    			<input type="number" ng-model="ingredient.amount" name="units" class="price form-control input-sm" placeholder="Enter Units" required="0" min="0" />
+                    			<div class="has-error" ng-show="ingredientForm.units.$dirty">
+                        			<span ng-show="ingredientForm.units.$error.required">This is a required field</span>
+                        			<span ng-show="ingredientForm.units.$error.min">Minimum amount is 0</span>
+                        			<span ng-show="ingredientForm.units.$invalid">This field is invalid </span>
+                    			</div>
+                			</div>
+            			</div>
+        			</div>
+    			</form>
+			</div>
+
+			<div class="row">
+				<div class="form-actions floatRight">
+					<button ng-click="addIngredient()" class="btn btn-primary btn-sm">Add Ingredient</button>
+					<input type="submit" value="Submit" ng-click="submit()" class="btn btn-primary btn-sm" ng-disabled="addIngredientForm.$invalid" />
+					<button type="button" ng-click="reset()" class="btn btn-warning btn-sm" ng-disabled="addIngredientForm.$pristine">Reset Form</button>
+				</div>
+			</div>
+			<div ng-show="success">Ingredient Created</div>
+			<div ng-show="failure">Error: Duplicate Ingredient</div>
+		</div>
+
+		<a href="/index">Home</a>
+	</div>
+</body>
+</html>
