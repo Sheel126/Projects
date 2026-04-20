@@ -33,11 +33,11 @@ import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMoc
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * End-to-end tests that exercise provider routing against WireMock stubs with real infrastructure.
+ * Validates semantic caching when exact Redis caching is disabled so lookups hit pgvector.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Testcontainers(disabledWithoutDocker = true)
-class ChatCompletionIntegrationTest {
+class SemanticCacheIntegrationTest {
 
     private static WireMockServer wireMock;
 
@@ -75,7 +75,7 @@ class ChatCompletionIntegrationTest {
     }
 
     /**
-     * Binds container endpoints and provider base URLs for the Spring context.
+     * Binds container endpoints, disables exact cache, and points providers at WireMock.
      *
      * @param registry Spring dynamic property registry
      */
@@ -97,6 +97,9 @@ class ChatCompletionIntegrationTest {
         registry.add("llm.anthropic.version", () -> "2023-06-01");
         registry.add("llm.gemini.base-url", () -> base);
         registry.add("llm.gemini.api-key", () -> "gemini-test");
+        registry.add("llm.cache.exact-enabled", () -> "false");
+        registry.add("llm.cache.semantic-enabled", () -> "true");
+        registry.add("llm.cache.semantic-similarity-threshold", () -> "0.99");
     }
 
     private static synchronized void startWireMockIfNeeded() {
@@ -177,40 +180,17 @@ class ChatCompletionIntegrationTest {
     }
 
     /**
-     * Proxies an OpenAI model through WireMock.
+     * Second identical prompt should hit semantic cache (exact cache disabled) without a second chat call.
      */
     @Test
-    void openAiCompletion() throws Exception {
-        ChatRequest body = new ChatRequest(
-            "gpt-4o",
-            List.of(new Message("user", "hi")),
-            0.2,
-            32,
-            "integration-user"
-        );
-        ResponseEntity<String> res = restTemplate.postForEntity(
-            "http://localhost:" + port + "/v1/chat/completions",
-            body,
-            String.class
-        );
-        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
-        JsonNode root = objectMapper.readTree(res.getBody());
-        assertThat(root.path("provider").asText()).isEqualTo("openai");
-        assertThat(root.path("choice").path("content").asText()).isEqualTo("openai-ok");
-    }
-
-    /**
-     * Verifies the Redis exact cache avoids a second upstream OpenAI chat call.
-     */
-    @Test
-    void openAiExactCacheHit() throws Exception {
+    void semanticCacheHitSkipsSecondChatCall() throws Exception {
         wireMock.resetRequests();
         ChatRequest body = new ChatRequest(
             "gpt-4o",
-            List.of(new Message("user", "exact-cache-token")),
-            0.1,
+            List.of(new Message("user", "semantic-cache-token")),
+            0.2,
             32,
-            "integration-cache-user"
+            "semantic-cache-user"
         );
         ResponseEntity<String> first = restTemplate.postForEntity(
             "http://localhost:" + port + "/v1/chat/completions",
@@ -230,63 +210,6 @@ class ChatCompletionIntegrationTest {
         assertThat(secondRoot.path("fromCache").asBoolean()).isTrue();
         assertThat(secondRoot.path("choice").path("content").asText()).isEqualTo("openai-ok");
         wireMock.verify(exactly(1), postRequestedFor(urlEqualTo("/v1/chat/completions")));
-    }
-
-    /**
-     * Proxies an Anthropic model through WireMock.
-     */
-    @Test
-    void anthropicCompletion() throws Exception {
-        ChatRequest body = new ChatRequest(
-            "claude-3-5-sonnet-20241022",
-            List.of(new Message("user", "hi")),
-            null,
-            64,
-            "integration-user"
-        );
-        ResponseEntity<String> res = restTemplate.postForEntity(
-            "http://localhost:" + port + "/v1/chat/completions",
-            body,
-            String.class
-        );
-        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
-        JsonNode root = objectMapper.readTree(res.getBody());
-        assertThat(root.path("provider").asText()).isEqualTo("anthropic");
-        assertThat(root.path("choice").path("content").asText()).isEqualTo("anthropic-ok");
-    }
-
-    /**
-     * Proxies a Gemini model through WireMock.
-     */
-    @Test
-    void geminiCompletion() throws Exception {
-        ChatRequest body = new ChatRequest(
-            "gemini-1.5-pro",
-            List.of(new Message("user", "hi")),
-            null,
-            32,
-            "integration-user"
-        );
-        ResponseEntity<String> res = restTemplate.postForEntity(
-            "http://localhost:" + port + "/v1/chat/completions",
-            body,
-            String.class
-        );
-        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
-        JsonNode root = objectMapper.readTree(res.getBody());
-        assertThat(root.path("provider").asText()).isEqualTo("gemini");
-        assertThat(root.path("choice").path("content").asText()).isEqualTo("gemini-ok");
-    }
-
-    /**
-     * Verifies the liveness endpoint is reachable.
-     */
-    @Test
-    void healthEndpoint() {
-        ResponseEntity<Void> res = restTemplate.getForEntity(
-            "http://localhost:" + port + "/health",
-            Void.class
-        );
-        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
+        wireMock.verify(exactly(2), postRequestedFor(urlEqualTo("/v1/embeddings")));
     }
 }

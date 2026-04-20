@@ -20,4 +20,15 @@ public record ChatResponse(
     boolean fromCache,
     long latencyMs
 ) {
+
+    /**
+     * Returns a copy with cache metadata and measured latency (for example a Redis/pgvector lookup).
+     *
+     * @param fromCache whether the payload was served from cache
+     * @param latencyMs gateway-observed latency for this operation in milliseconds
+     * @return new response instance
+     */
+    public ChatResponse withFromCacheAndLatency(boolean fromCache, long latencyMs) {
+        return new ChatResponse(id, model, provider, choice, usage, fromCache, latencyMs);
+    }
 }

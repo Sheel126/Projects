@@ -34,6 +34,13 @@ springdoc:
     path: /swagger-ui
 
 llm:
+  cache:
+    exact-enabled: ${EXACT_CACHE_ENABLED:true}
+    semantic-enabled: ${SEMANTIC_CACHE_ENABLED:true}
+    exact-ttl-seconds: ${EXACT_CACHE_TTL_SECONDS:3600}
+    semantic-ttl-seconds: ${SEMANTIC_CACHE_TTL_SECONDS:3600}
+    semantic-similarity-threshold: ${SEMANTIC_CACHE_SIMILARITY_THRESHOLD:0.95}
+    embedding-model: ${EMBEDDING_MODEL:text-embedding-3-small}
   openai:
     base-url: ${OPENAI_BASE_URL:https://api.openai.com}
     api-key: ${OPENAI_API_KEY:}

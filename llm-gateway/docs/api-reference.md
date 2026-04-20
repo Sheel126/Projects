@@ -27,6 +27,11 @@ Liveness probe. Returns `200` with an empty body when the process is up.
 
 **Response** (`200`): canonical `ChatResponse` JSON — see `com.llmgateway.api.dto.ChatResponse` in source.
 
+**Caching (Phase 2)**:
+
+- **Exact**: identical canonical requests (including `userId` when present) hit Redis and set `fromCache` to `true` without calling the upstream chat endpoint again until TTL expiry.
+- **Semantic**: when semantic caching is enabled and an OpenAI API key is configured, the gateway embeds the prompt text, searches prior rows in `semantic_cache` using pgvector cosine similarity, and may return a prior completion with `fromCache` true even when the raw prompt text differs slightly. Semantic misses still call the upstream provider; successful responses are stored with the configured TTL.
+
 **Errors**:
 
 - `400` — validation failures (`ErrorResponse` with `validation.failed`).

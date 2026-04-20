@@ -7,6 +7,6 @@ import org.springframework.context.annotation.Configuration;
  * Core Spring configuration for the gateway.
  */
 @Configuration
-@EnableConfigurationProperties(LlmProperties.class)
+@EnableConfigurationProperties({LlmProperties.class, CacheProperties.class})
 public class GatewayConfig {
 }

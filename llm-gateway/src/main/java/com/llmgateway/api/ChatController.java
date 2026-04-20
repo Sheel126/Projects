@@ -2,7 +2,7 @@ package com.llmgateway.api;
 
 import com.llmgateway.api.dto.ChatRequest;
 import com.llmgateway.api.dto.ChatResponse;
-import com.llmgateway.provider.ProviderRouter;
+import com.llmgateway.service.ChatCompletionService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -20,15 +20,15 @@ import java.util.UUID;
 @RequestMapping("/v1")
 public class ChatController {
 
-    private final ProviderRouter router;
+    private final ChatCompletionService chatCompletionService;
 
     /**
      * Creates the chat controller.
      *
-     * @param router provider router
+     * @param chatCompletionService chat completion orchestrator
      */
-    public ChatController(ProviderRouter router) {
-        this.router = router;
+    public ChatController(ChatCompletionService chatCompletionService) {
+        this.chatCompletionService = chatCompletionService;
     }
 
     /**
@@ -46,7 +46,7 @@ public class ChatController {
         @Valid @RequestBody ChatRequest request,
         @RequestAttribute(name = "apiKeyId", required = false) UUID apiKeyId
     ) {
-        ChatResponse response = router.route(request);
+        ChatResponse response = chatCompletionService.complete(request);
         return ResponseEntity.ok(response);
     }
 }

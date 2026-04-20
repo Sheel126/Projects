@@ -36,7 +36,7 @@ See [docs/architecture.md](docs/architecture.md) for components, data stores, an
 | Area | Status |
 |------|--------|
 | Unified REST proxy (OpenAI, Anthropic, Gemini) | Phase 1 — implemented |
-| Exact + semantic cache | Planned (Phase 2) |
+| Exact + semantic cache | Phase 2 — implemented (Redis exact + pgvector semantic via OpenAI embeddings) |
 | API keys + sliding-window rate limits | Planned (Phase 3) |
 | Resilience4j circuit breaker + failover table | Partial — basic model translation + health-based failover |
 | Structured logs + Prometheus + Grafana | Logs JSON via Logstash encoder; Prometheus endpoint enabled |
@@ -60,8 +60,12 @@ All environment variables are listed in [.env.example](.env.example). Spring rea
 | `REDIS_URL` | Redis URL fallback when `SPRING_DATA_REDIS_URL` is unset |
 | `SPRING_DATA_REDIS_URL` | Preferred Spring property for Redis (Compose sets this) |
 | `GRAFANA_PASSWORD` | Grafana admin password in compose |
-| `SEMANTIC_CACHE_SIMILARITY_THRESHOLD` | Reserved (Phase 2) |
-| `EXACT_CACHE_TTL_SECONDS` | Reserved (Phase 2) |
+| `SEMANTIC_CACHE_SIMILARITY_THRESHOLD` | Minimum cosine similarity (0–1) for semantic cache hits |
+| `EXACT_CACHE_TTL_SECONDS` | TTL for Redis exact cache entries (seconds) |
+| `SEMANTIC_CACHE_TTL_SECONDS` | TTL for semantic cache rows in Postgres (seconds; falls back to exact TTL when unset/0) |
+| `EXACT_CACHE_ENABLED` | Set `false` to disable Redis exact caching |
+| `SEMANTIC_CACHE_ENABLED` | Set `false` to disable semantic caching |
+| `EMBEDDING_MODEL` | OpenAI embeddings model (must emit 1536 dimensions for current schema) |
 | `DEFAULT_RATE_LIMIT_RPM` | Reserved (Phase 3) |
 
 ## Development
@@ -71,7 +75,7 @@ All environment variables are listed in [.env.example](.env.example). Spring rea
 ```
 
 - Unit tests always run on every machine.  
-- `ChatCompletionIntegrationTest` uses Testcontainers (Postgres with pgvector, Redis) and WireMock for provider HTTP. It runs automatically when Docker is available; otherwise it is skipped (`@Testcontainers(disabledWithoutDocker = true)`).  
+- `ChatCompletionIntegrationTest` and `SemanticCacheIntegrationTest` use Testcontainers (Postgres with pgvector, Redis) and WireMock for provider HTTP. They run automatically when Docker is available; otherwise they are skipped (`@Testcontainers(disabledWithoutDocker = true)`).  
 
 ### Adding a provider
 
