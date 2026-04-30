@@ -48,4 +48,19 @@ public class ApiExceptionHandler {
             .status(HttpStatus.BAD_REQUEST)
             .body(new ErrorResponse("validation.failed", msg));
     }
+
+    @ExceptionHandler(AuthException.class)
+    public ResponseEntity<ErrorResponse> onAuth(AuthException ex) {
+        return ResponseEntity
+            .status(HttpStatus.UNAUTHORIZED)
+            .body(new ErrorResponse(ex.getCode(), ex.getMessage()));
+    }
+
+    @ExceptionHandler(RateLimitException.class)
+    public ResponseEntity<ErrorResponse> onRateLimit(RateLimitException ex) {
+        return ResponseEntity
+            .status(429)
+            .header("Retry-After", Long.toString(ex.getRetryAfterSeconds()))
+            .body(new ErrorResponse("ratelimit.exceeded", ex.getMessage()));
+    }
 }

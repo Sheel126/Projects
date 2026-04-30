@@ -15,6 +15,18 @@ spring:
 server:
   port: ${SERVER_PORT:8080}
 
+gateway:
+  security:
+    auth:
+      enabled: ${GATEWAY_AUTH_ENABLED:false}
+      header-name: ${GATEWAY_AUTH_HEADER_NAME:X-API-Key}
+      hmac-secret: ${GATEWAY_API_KEY_HMAC_SECRET:}
+      admin-token: ${GATEWAY_ADMIN_TOKEN:}
+    rate-limit:
+      enabled: ${GATEWAY_RATE_LIMIT_ENABLED:false}
+      default-rpm: ${DEFAULT_RATE_LIMIT_RPM:100}
+      window-seconds: ${GATEWAY_RATE_LIMIT_WINDOW_SECONDS:60}
+
 management:
   endpoints:
     web:

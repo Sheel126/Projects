@@ -31,13 +31,17 @@ curl -sS http://localhost:8080/v1/chat/completions \
 
 See [docs/architecture.md](docs/architecture.md) for components, data stores, and request flow.
 
+## Interview notes
+
+See [docs/INTERVIEW_GUIDE.md](docs/INTERVIEW_GUIDE.md) for a recruiter/interview-ready narrative of Phases 1–3 and the Phase 3 sliding-window rate limiter.
+
 ## Features (roadmap status)
 
 | Area | Status |
 |------|--------|
 | Unified REST proxy (OpenAI, Anthropic, Gemini) | Phase 1 — implemented |
 | Exact + semantic cache | Phase 2 — implemented (Redis exact + pgvector semantic via OpenAI embeddings) |
-| API keys + sliding-window rate limits | Planned (Phase 3) |
+| API keys + sliding-window rate limits | Phase 3 — implemented (HMAC-hashed API keys + Redis ZSET sliding window) |
 | Resilience4j circuit breaker + failover table | Partial — basic model translation + health-based failover |
 | Structured logs + Prometheus + Grafana | Logs JSON via Logstash encoder; Prometheus endpoint enabled |
 | Cost tracking + budgets | Planned (Phase 6) |
@@ -71,6 +75,7 @@ All environment variables are listed in [.env.example](.env.example). Spring rea
 ## Development
 
 ```bash
+java -version  # requires Java 17+ (project targets Java 21)
 ./gradlew test
 ```
 

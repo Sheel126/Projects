@@ -6,6 +6,32 @@ Base URL: `http://localhost:8080` (or your deployed host).
 
 Liveness probe. Returns `200` with an empty body when the process is up.
 
+## Authentication (Phase 3, optional)
+
+When enabled (`GATEWAY_AUTH_ENABLED=true`), requests to `/v1/*` (except `/v1/admin/*`) must include:
+
+- Header: `X-API-Key: <your_gateway_api_key>` (configurable via `GATEWAY_AUTH_HEADER_NAME`)
+
+Missing or invalid keys return `401` with an `ErrorResponse` code:
+
+- `auth.missing`
+- `auth.invalid`
+
+## Rate limiting (Phase 3, optional)
+
+When enabled (`GATEWAY_RATE_LIMIT_ENABLED=true`), the gateway enforces a **sliding-window** limit (default: requests/minute) backed by Redis.
+
+Blocked requests return `429` with:
+
+- `Retry-After: <seconds>`
+- Body code: `ratelimit.exceeded`
+
+Successful responses may include:
+
+- `X-RateLimit-Limit`
+- `X-RateLimit-Remaining`
+- `X-RateLimit-Window-Seconds`
+
 ## `POST /v1/chat/completions`
 
 **Request body** (`application/json`):
@@ -46,3 +72,25 @@ Interactive UI: `/swagger-ui/index.html`
 
 - `GET /actuator/health` — component health (includes providers and Redis when configured).
 - `GET /actuator/prometheus` — Prometheus text exposition format.
+
+## Debug
+
+## `GET /v1/whoami`
+
+Returns the authenticated identity derived from the API key (or nulls when auth is disabled):
+
+```json
+{ "apiKeyId": "uuid-or-null", "userId": "string-or-null" }
+```
+
+## Admin (Phase 3)
+
+Admin endpoints are protected by `X-Admin-Token` matching `GATEWAY_ADMIN_TOKEN`.
+
+### `POST /v1/admin/api-keys`
+
+Creates an API key. The raw key is only returned once in the response.
+
+### `DELETE /v1/admin/api-keys/{id}`
+
+Revokes an API key id.

@@ -4,11 +4,12 @@
 
 Clients call the gateway’s **canonical** chat API (`POST /v1/chat/completions`). The gateway:
 
-1. Validates the JSON body (`ChatRequest`).
-2. Checks **Phase 2 caches** in order: Redis **exact** key (canonical request hash), then Postgres **semantic** match (OpenAI embedding cosine similarity against `semantic_cache` when enabled and an OpenAI API key is present).
-3. Resolves a **primary** `LlmProvider` from the requested `model` id (prefix / support rules per adapter).
-4. If the primary reports unhealthy (currently: missing API key), attempts **failover** to another healthy provider using `ModelTranslator` for cross-vendor model ids.
-5. Returns a **canonical** `ChatResponse` (choice, usage, provider id, latency, `fromCache` when served from cache).
+1. (Phase 3, optional) Authenticates `X-API-Key` against `api_keys` (HMAC-hashed at rest) and applies a Redis **sliding-window** rate limit.
+2. Validates the JSON body (`ChatRequest`).
+3. Checks **Phase 2 caches** in order: Redis **exact** key (canonical request hash), then Postgres **semantic** match (OpenAI embedding cosine similarity against `semantic_cache` when enabled and an OpenAI API key is present).
+4. Resolves a **primary** `LlmProvider` from the requested `model` id (prefix / support rules per adapter).
+5. If the primary reports unhealthy (currently: missing API key), attempts **failover** to another healthy provider using `ModelTranslator` for cross-vendor model ids.
+6. Returns a **canonical** `ChatResponse` (choice, usage, provider id, latency, `fromCache` when served from cache).
 
 ## Components
 
@@ -25,7 +26,7 @@ Clients call the gateway’s **canonical** chat API (`POST /v1/chat/completions`
 | Store | Role (current / planned) |
 |-------|---------------------------|
 | PostgreSQL + Flyway | `api_keys`, `usage_records`, `semantic_cache` (+ pgvector extension) — semantic cache reads/writes active in Phase 2 |
-| Redis | Exact response cache (Phase 2); rate limiting still planned (Phase 3) |
+| Redis | Exact response cache (Phase 2) + sliding-window rate limiting buckets (Phase 3) |
 
 ## Observability
 
