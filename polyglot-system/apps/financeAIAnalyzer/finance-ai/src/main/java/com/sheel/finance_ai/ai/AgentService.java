@@ -22,6 +22,8 @@ import com.sheel.finance_ai.ai.tools.SentimentTool;
 import com.sheel.finance_ai.ai.tools.TrendingTool;
 import com.sheel.finance_ai.exception.AgentException;
 import com.sheel.finance_ai.model.StockRecommendation;
+import com.sheel.finance_ai.quant.QuantScoreResponse;
+import com.sheel.finance_ai.quant.QuantitativeScoringClient;
 import com.sheel.finance_ai.repository.StockRecommendationRepository;
 import com.sheel.finance_ai.util.RetryUtils;
 import com.sheel.finance_ai.validation.StockRecommendationValidator;
@@ -38,6 +40,7 @@ public class AgentService {
     private final String analysisPromptTemplate;
     private final FinanceAssistant assistant;
     private final EvaluationAssistant evaluator;
+    private final QuantitativeScoringClient quantClient;
 
     private final ObjectMapper mapper =
         new ObjectMapper().findAndRegisterModules();
@@ -53,6 +56,7 @@ public class AgentService {
 
     public AgentService(
         @Value("${openai.api.key}") String apiKey,
+        QuantitativeScoringClient quantClient,
         PriceTool priceTool,
         TrendingTool trendingTool,
         HistoryTool historyTool,
@@ -64,6 +68,7 @@ public class AgentService {
 
         this.analysisPromptTemplate =
                 PromptLoader.load("prompts/stock_analyzer_prompt.txt");
+        this.quantClient = quantClient;
 
         ChatLanguageModel mainModel = OpenAiChatModel.builder()
                 .apiKey(apiKey)
@@ -206,8 +211,17 @@ public class AgentService {
 
         String memoryContext = agentMemory.buildMemoryContext();
 
+        QuantScoreResponse quant = quantClient.fetchScore(ticker);
+        String quantJson;
+        try {
+            quantJson = mapper.writeValueAsString(quant);
+        } catch (Exception e) {
+            quantJson = "{\"ticker\":\"%s\",\"unavailable\":true,\"error\":\"Failed to serialize quant response\"}"
+                    .formatted(ticker);
+        }
+
         String prompt = this.analysisPromptTemplate
-                .formatted(memoryContext, ticker);
+                .formatted(memoryContext, quantJson, ticker);
 
         try {
             return assistant.chat(prompt);

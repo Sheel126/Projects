@@ -2,7 +2,12 @@ import pandas as pd
 import pandas_ta as ta
 import os
 from datetime import datetime
-from config import TICKER_LIST_PATH, get_raw_path, LOGS_DIR
+try:
+    # Package import (when used as a module, e.g., from FastAPI service)
+    from finance_vibe.config import TICKER_LIST_PATH, get_raw_path, LOGS_DIR
+except ImportError:
+    # Script-style import for legacy usage
+    from config import TICKER_LIST_PATH, get_raw_path, LOGS_DIR
 
 def calculate_composite_vibe(df):
     # 1. Trend

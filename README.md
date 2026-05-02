@@ -1,5 +1,12 @@
 # Projects
 
+## Polyglot system (Finance Vibe + FinSight AI)
+
+The combined microservice architecture lives in `polyglot-system/`.
+
+- Start here: `polyglot-system/README.md`
+- Architecture notes: `polyglot-system/ARCHITECTURE.md`
+
 # 📊 Finance Vibe
 A modular Python pipeline that fetches stock data from Yahoo Finance and scores each ticker using a **Composite Vibe Score** to surface high-conviction swing trade setups.
 

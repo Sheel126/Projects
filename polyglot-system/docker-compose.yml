@@ -1,0 +1,60 @@
+services:
+  python-scoring-service:
+    build:
+      context: ./apps/finance-vibe
+      dockerfile: Dockerfile
+    container_name: python-scoring-service
+    ports:
+      - "8000:8000"
+    environment:
+      # Keep the API stateless: always fetch fresh yfinance data
+      PORT: "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  postgres:
+    image: postgres:15
+    container_name: finance-ai-postgres
+    environment:
+      POSTGRES_USER: financeuser
+      POSTGRES_PASSWORD: financepass
+      POSTGRES_DB: finance_ai
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U financeuser -d finance_ai"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  java-ai-orchestrator:
+    build:
+      context: ./apps/financeAIAnalyzer/finance-ai
+      dockerfile: Dockerfile
+    container_name: java-ai-orchestrator
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      # Internal Docker DNS name for the Python microservice
+      QUANT_API_URL: "http://python-scoring-service:8000"
+
+      # Point Spring to the Postgres container
+      SPRING_DATASOURCE_URL: "jdbc:postgresql://postgres:5432/finance_ai"
+      SPRING_DATASOURCE_USERNAME: "financeuser"
+      SPRING_DATASOURCE_PASSWORD: "financepass"
+    depends_on:
+      python-scoring-service:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+
