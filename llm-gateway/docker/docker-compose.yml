@@ -3,8 +3,9 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
+    # Host 8081 avoids clashing with polyglot-system Java on 8080
     ports:
-      - "8080:8080"
+      - "8081:8080"
     environment:
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-}
       DATABASE_URL: jdbc:postgresql://postgres:5432/llmgateway

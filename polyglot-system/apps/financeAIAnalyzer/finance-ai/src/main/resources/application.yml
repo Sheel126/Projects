@@ -1,0 +1,44 @@
+spring:
+  application:
+    name: finance-ai
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/finance_ai}
+    username: ${SPRING_DATASOURCE_USERNAME:financeuser}
+    password: ${SPRING_DATASOURCE_PASSWORD:financepass}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+
+server:
+  port: ${SERVER_PORT:8080}
+
+# Relaxed env binding: OPENAI_API_KEY, ALPHAVANTAGE_API_KEY, etc.
+openai:
+  api:
+    key: ${OPENAI_API_KEY:}
+
+alphavantage:
+  api-key: ${ALPHAVANTAGE_API_KEY:}
+
+news:
+  api:
+    key: ${NEWS_API_KEY:}
+
+fmp:
+  api:
+    key: ${FMP_API_KEY:}
+
+quant:
+  api:
+    url: ${QUANT_API_URL:http://localhost:8000}
+
+logging:
+  level:
+    root: INFO
+    com.sheel.finance_ai: INFO

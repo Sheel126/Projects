@@ -1,7 +1,5 @@
 package com.sheel.finance_ai.quant;
 
-import java.time.Duration;
-
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
@@ -20,9 +18,6 @@ public class QuantitativeScoringClient {
     ) {
         this.client = RestClient.builder()
                 .baseUrl(baseUrl)
-                .requestFactory(requestFactory -> {
-                    // Keep defaults; timeouts are configured per-request below where possible.
-                })
                 .build();
     }
 

@@ -16,7 +16,7 @@ The `app` service waits for Postgres and Redis health checks before starting. Th
 
 | Port | Service |
 |------|---------|
-| 8080 | LLM Gateway |
+| **8081** (host) → 8080 (container) | LLM Gateway — mapped to **8081** on the host so it can run alongside **polyglot-system**, which uses host **8080** for its Java API. |
 | 5432 | Postgres (not published by default; add `ports` if you need host access) |
 | 6379 | Redis (internal only unless published) |
 | 9090 | Prometheus |

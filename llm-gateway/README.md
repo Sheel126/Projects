@@ -13,18 +13,20 @@ cd docker
 docker compose --env-file ../.env up --build
 ```
 
-Verify liveness and proxy (replace the API key values with your real provider keys in `.env` for non-mocked traffic):
+Verify liveness and proxy (replace the API key values with your real provider keys in `.env` for non-mocked traffic).
+
+**Docker Compose** publishes the app on host **8081** (container still listens on 8080) so it does not clash with **polyglot-system** or other apps on localhost:8080. For a local `./gradlew bootRun` without Compose, use **8080** (or `SERVER_PORT`).
 
 ```bash
-curl -sS http://localhost:8080/health -o /dev/null -w "%{http_code}\n"
+curl -sS http://localhost:8081/health -o /dev/null -w "%{http_code}\n"
 
-curl -sS http://localhost:8080/v1/chat/completions \
+curl -sS http://localhost:8081/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"gpt-4o","messages":[{"role":"user","content":"Say hi in one word."}],"userId":"demo"}'
 ```
 
-- Swagger UI: http://localhost:8080/swagger-ui/index.html  
-- Prometheus scrape path: http://localhost:8080/actuator/prometheus  
+- Swagger UI (Compose): http://localhost:8081/swagger-ui/index.html  
+- Prometheus scrape path (from host, Compose): http://localhost:8081/actuator/prometheus  
 - Grafana (compose): http://localhost:3000  
 
 ## Architecture

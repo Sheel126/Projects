@@ -12,3 +12,13 @@ __pycache__/
 .env
 venv312/
 *.properties
+
+# Local-only interview notes / runbooks (never commit)
+**/LOCAL_PRIVATE_*.md
+
+# History Channel Generator
+history-channel-generator/backend/output/
+history-channel-generator/backend/*.db
+history-channel-generator/frontend/node_modules/
+history-channel-generator/frontend/dist/
+history-channel-generator/frontend/.angular/

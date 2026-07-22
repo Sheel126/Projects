@@ -36,4 +36,4 @@ Clients call the gateway’s **canonical** chat API (`POST /v1/chat/completions`
 
 ## Docker stack
 
-`docker/docker-compose.yml` runs the Spring app, Postgres (pgvector image), Redis, Prometheus, and Grafana on a single user-defined network so Prometheus can scrape `http://app:8080/actuator/prometheus`.
+`docker/docker-compose.yml` runs the Spring app, Postgres (pgvector image), Redis, Prometheus, and Grafana on a single user-defined network so Prometheus can scrape `http://app:8080/actuator/prometheus` (inside Compose the app listens on **8080**; on the **host** the repo maps **8081→8080** so another local service can keep using host port 8080).

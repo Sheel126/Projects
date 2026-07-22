@@ -1,5 +1,21 @@
 # Polyglot Microservice Architecture: Finance Vibe + FinSight AI
 
+## Tech stack (resume-ready summary)
+
+| Layer | Technology | Role |
+|--------|------------|------|
+| Quant / scoring | **Python 3.12**, **FastAPI**, **uvicorn**, **pandas**, **pandas_ta**, **yfinance** | REST API for composite “vibe” score and technical signals (SMA, MACD, RSI, CCI). |
+| Orchestration & API | **Java 17**, **Spring Boot 3.3**, **Spring Web / WebFlux**, **Spring Data JPA** | REST APIs, persistence, HTTP client to Python quant service. |
+| LLM layer | **LangChain4j** (OpenAI integration), **gpt-4o-mini** | Tool-calling agent, structured BUY/SELL/HOLD output, optional evaluation loop. |
+| Database | **PostgreSQL 15** | JPA entities (users, portfolios, recommendations, income/expense, etc.). |
+| Container runtime | **Docker**, **Docker Compose** | Multi-service stack, health checks, internal DNS (`python-scoring-service`, `postgres`). |
+
+**Caching / messaging:** This polyglot stack does **not** use Redis, Kafka, or a separate message bus. State lives in Postgres; quant scores are computed on demand via HTTP to Python.
+
+**Related flagship project:** For a separate **LLM API gateway** (multi-provider proxy, Postgres **pgvector**, **Redis** for exact cache + rate limits, metrics), see the `llm-gateway` repository and its `docs/architecture.md`.
+
+---
+
 ## Overview
 
 This repo contains two services that together implement an interview-ready, production-flavored “quant + LLM” analysis pipeline:
