@@ -139,3 +139,21 @@ class PipelineMessage(BaseModel):
     status: ProjectStatus
     paragraphs_reused: int | None = None
     paragraphs_generated: int | None = None
+
+
+class ImageTestRequest(BaseModel):
+    prompt: str = Field(min_length=3, max_length=4000)
+    width: int | None = Field(default=None, ge=256, le=2048)
+    height: int | None = Field(default=None, ge=256, le=2048)
+    seed: int | None = Field(default=None, ge=0, le=2**32 - 1)
+
+
+class ImageTestResponse(BaseModel):
+    message: str
+    provider: str
+    file_path: str
+    media_url: str
+    generation_time_sec: float | None = None
+    width: int
+    height: int
+    seed: int | None = None

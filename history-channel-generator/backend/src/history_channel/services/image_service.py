@@ -1,93 +1,12 @@
-import re
-import time
-import urllib.request
 from pathlib import Path
 
-import replicate
-from replicate.exceptions import ReplicateError
 from sqlalchemy.orm import Session
 
 from history_channel.agents.image_prompt_agent import generate_scene_prompts
 from history_channel.config import settings
 from history_channel.models import GeneratedImage, ProjectStatus, ProjectTopic, Scene
-
-# Free-tier accounts are limited to ~6 predictions/min with burst of 1.
-REPLICATE_MIN_INTERVAL_SEC = 12.0
-REPLICATE_MAX_RETRIES = 5
-
-_last_replicate_call_at = 0.0
-
-
-def _download_image(url: str, dest: Path) -> None:
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    urllib.request.urlretrieve(url, dest)
-
-
-def _parse_retry_after_seconds(error: Exception) -> float:
-    text = str(error)
-    match = re.search(r"resets in ~?(\d+)\s*s", text, re.IGNORECASE)
-    if match:
-        return float(match.group(1)) + 1.0
-    return REPLICATE_MIN_INTERVAL_SEC
-
-
-def _wait_for_rate_limit() -> None:
-    global _last_replicate_call_at
-    elapsed = time.monotonic() - _last_replicate_call_at
-    if elapsed < REPLICATE_MIN_INTERVAL_SEC:
-        time.sleep(REPLICATE_MIN_INTERVAL_SEC - elapsed)
-
-
-def _generate_flux_image(prompt: str) -> str:
-    global _last_replicate_call_at
-
-    if not settings.replicate_api_token:
-        raise ValueError("Replicate API token is required for image generation")
-
-    client = replicate.Client(api_token=settings.replicate_api_token)
-    last_error: Exception | None = None
-
-    for _attempt in range(REPLICATE_MAX_RETRIES):
-        _wait_for_rate_limit()
-        try:
-            output = client.run(
-                settings.flux_model,
-                input={
-                    "prompt": prompt,
-                    "aspect_ratio": "16:9",
-                    "output_format": "png",
-                    "output_quality": 90,
-                    # Schnell ignores negative_prompt on some versions; harmless if present
-                    "negative_prompt": settings.flux_negative_prompt,
-                },
-            )
-            _last_replicate_call_at = time.monotonic()
-            if isinstance(output, list):
-                return str(output[0])
-            return str(output)
-        except ReplicateError as exc:
-            last_error = exc
-            status = getattr(exc, "status", None)
-            if status == 429 or "429" in str(exc) or "throttled" in str(exc).lower():
-                wait_s = _parse_retry_after_seconds(exc)
-                time.sleep(wait_s)
-                _last_replicate_call_at = time.monotonic()
-                continue
-            raise
-        except Exception as exc:
-            if "429" in str(exc) or "throttled" in str(exc).lower():
-                last_error = exc
-                wait_s = _parse_retry_after_seconds(exc)
-                time.sleep(wait_s)
-                _last_replicate_call_at = time.monotonic()
-                continue
-            raise
-
-    raise RuntimeError(
-        "Replicate rate limit exceeded after retries. "
-        "Free-tier accounts are capped at ~6 predictions/min until you add a payment "
-        f"method at https://replicate.com/account/billing. Last error: {last_error}"
-    )
+from history_channel.providers.factory import get_image_provider
+from history_channel.providers.types import ImageGenerationRequest
 
 
 def _generate_scene_image(
@@ -98,9 +17,14 @@ def _generate_scene_image(
     out_dir: Path,
 ) -> GeneratedImage:
     """Generate exactly one image per scene and auto-select it."""
-    image_url = _generate_flux_image(scene.image_prompt or "")
+    provider = get_image_provider()
     file_path = out_dir / f"scene_{order}.png"
-    _download_image(image_url, file_path)
+    request = ImageGenerationRequest(
+        prompt=scene.image_prompt or "",
+        negative_prompt=settings.flux_negative_prompt,
+        aspect_ratio="16:9",
+    )
+    provider.generate_to_file(request, file_path)
 
     img = GeneratedImage(
         project_id=project.id,
@@ -180,7 +104,6 @@ def generate_images(db: Session, project: ProjectTopic) -> ProjectTopic:
             if order == 0:
                 first_image = img
 
-    # Thumbnail = first scene image (no extra Replicate call)
     if first_image:
         first_image.is_thumbnail = True
         project.thumbnail_path = first_image.file_path
@@ -192,3 +115,45 @@ def generate_images(db: Session, project: ProjectTopic) -> ProjectTopic:
     db.commit()
     db.refresh(project)
     return project
+
+
+def generate_test_image(
+    prompt: str,
+    *,
+    width: int | None = None,
+    height: int | None = None,
+    seed: int | None = None,
+) -> dict:
+    """Generate a one-off test image for the Image Test UI."""
+    from datetime import datetime, timezone
+
+    provider = get_image_provider()
+    out_dir = settings.test_images_output_dir()
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    filename = f"test_{stamp}.png"
+    if seed is not None:
+        filename = f"test_{stamp}_seed{seed}.png"
+    dest = out_dir / filename
+
+    request = ImageGenerationRequest(
+        prompt=prompt,
+        width=width,
+        height=height,
+        seed=seed,
+        negative_prompt=settings.flux_negative_prompt,
+        aspect_ratio="16:9",
+    )
+    result = provider.generate_to_file(request, dest)
+    resolved_width = width or settings.comfyui_default_width
+    resolved_height = height or settings.comfyui_default_height
+
+    return {
+        "message": "Test image generated successfully",
+        "provider": provider.name,
+        "file_path": str(dest),
+        "media_url": f"/media/test_images/{filename}",
+        "generation_time_sec": result.generation_time_sec,
+        "width": resolved_width,
+        "height": resolved_height,
+        "seed": result.seed,
+    }

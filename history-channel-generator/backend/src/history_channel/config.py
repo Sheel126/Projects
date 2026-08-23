@@ -26,7 +26,19 @@ class Settings(BaseSettings):
     port: int = 8000
     background_music_path: str = "./assets/audio/music/suspense_background.mp3"
 
-    # Flux Schnell — Apache 2.0, commercial / YouTube OK
+    # Image generation provider: comfyui (default, local) or replicate
+    image_provider: str = "comfyui"
+
+    # ComfyUI — local FLUX / workflow-driven image generation
+    comfyui_base_url: str = "http://127.0.0.1:8188"
+    comfyui_workflow_path: str = ""
+    comfyui_timeout_seconds: float = 300.0
+    comfyui_poll_interval_seconds: float = 1.5
+    comfyui_default_width: int = 1280
+    comfyui_default_height: int = 720
+    comfyui_output_subdir: str = ""
+
+    # Flux Schnell — used only when IMAGE_PROVIDER=replicate
     flux_model: str = "black-forest-labs/flux-schnell"
 
     # Production defaults
@@ -41,6 +53,9 @@ class Settings(BaseSettings):
     video_width_test: int = 1280
     video_height_test: int = 720
     max_editor_retries: int = 3
+    image_generation_timeout_sec: float = 900.0
+    image_download_timeout_sec: float = 300.0
+    image_download_retries: int = 5
 
     # Video polish
     video_end_padding_sec: float = 1.5
@@ -80,6 +95,19 @@ class Settings(BaseSettings):
         if is_test_mode:
             return self.video_width_test, self.video_height_test
         return self.video_width_prod, self.video_height_prod
+
+    def comfyui_workflow_path_resolved(self) -> Path:
+        if self.comfyui_workflow_path.strip():
+            path = Path(self.comfyui_workflow_path)
+            if not path.is_absolute():
+                path = self.backend_root / path
+            return path
+        return self.backend_root / "assets" / "comfyui" / "flux_schnell_16x9.json"
+
+    def test_images_output_dir(self) -> Path:
+        path = self.output_dir / "test_images"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
 
 
 settings = Settings()

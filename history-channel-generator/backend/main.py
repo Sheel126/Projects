@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 from history_channel.database import init_db
+from history_channel.routes.images import router as images_router
 from history_channel.routes.projects import router as projects_router
 
 
@@ -35,6 +36,7 @@ app.add_middleware(
 )
 
 app.include_router(projects_router)
+app.include_router(images_router)
 
 output_dir = Path(__file__).resolve().parent / "output"
 output_dir.mkdir(parents=True, exist_ok=True)

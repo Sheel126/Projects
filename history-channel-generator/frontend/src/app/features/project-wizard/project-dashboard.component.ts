@@ -13,12 +13,22 @@ import { PHASE_LABELS, ProjectSummary } from '../../core/models/project.models';
   template: `
     <div class="max-w-5xl mx-auto px-6 py-10">
       <header class="mb-10">
-        <h1 class="text-3xl font-bold text-white tracking-tight">
-          History Channel Generator
-        </h1>
-        <p class="mt-2 text-documentary-muted">
-          Automate faceless historical documentary videos from topic to final render.
-        </p>
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <h1 class="text-3xl font-bold text-white tracking-tight">
+              History Channel Generator
+            </h1>
+            <p class="mt-2 text-documentary-muted">
+              Automate faceless historical documentary videos from topic to final render.
+            </p>
+          </div>
+          <a
+            routerLink="/image-test"
+            class="text-sm text-amber-400 hover:text-amber-300 transition shrink-0"
+          >
+            Image Test →
+          </a>
+        </div>
       </header>
 
       <section class="bg-documentary-card border border-documentary-border rounded-xl p-6 mb-10">

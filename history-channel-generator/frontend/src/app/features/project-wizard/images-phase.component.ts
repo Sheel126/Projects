@@ -1,5 +1,6 @@
 import { Component, EventEmitter, Input, OnChanges, Output } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { RouterLink } from '@angular/router';
 
 import { ProjectApiService } from '../../core/services/project-api.service';
 import { ProjectDetail, Scene } from '../../core/models/project.models';
@@ -8,14 +9,15 @@ import { PipelineWarningsComponent } from './pipeline-warnings.component';
 @Component({
   selector: 'app-images-phase',
   standalone: true,
-  imports: [CommonModule, PipelineWarningsComponent],
+  imports: [CommonModule, RouterLink, PipelineWarningsComponent],
   template: `
     <div class="space-y-6">
       <app-pipeline-warnings [project]="project" />
 
       <p class="text-documentary-muted text-sm">
-        Generate one cinematic image per scene via Flux Schnell (Apache 2.0 — commercial/YouTube OK).
-        Test Mode uses 3 scenes; production uses 12. Thumbnail reuses the first scene.
+        Generate one cinematic image per scene via your configured local image provider
+        (ComfyUI by default). Test Mode uses 3 scenes; production uses 12.
+        Thumbnail reuses the first scene. Use <a routerLink="/image-test" class="text-amber-400 hover:text-amber-300">Image Test</a> to preview prompts first.
       </p>
 
       <button
