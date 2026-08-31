@@ -1,0 +1,15 @@
+name: finance-vibe-staging
+
+services:
+  finance-vibe:
+    container_name: finance_vibe_staging
+    build:
+      context: .
+    ports:
+      - "5001:5000"
+    volumes:
+      - /mnt/fast/finance-vibe-data-staging:/app/data
+    restart: unless-stopped
+    environment:
+      TZ: America/New_York
+      FLASK_DEBUG: "1"

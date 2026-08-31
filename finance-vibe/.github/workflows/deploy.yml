@@ -1,0 +1,19 @@
+name: Deploy Finance Vibe
+
+on:
+  push:
+    branches:
+      - main
+      - staging
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - name: Deploy to Staging
+        if: github.ref == 'refs/heads/staging'
+        run: /opt/stacks/scripts/deploy.py staging
+
+      - name: Deploy to Production
+        if: github.ref == 'refs/heads/main'
+        run: /opt/stacks/scripts/deploy.py production

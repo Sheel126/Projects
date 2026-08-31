@@ -1,5 +1,14 @@
 # Projects
 
+## finance-vibe (Paper Trading Bot — daily-active)
+
+Automated Alpaca paper trading bot with Finance-Vibe signals, local Ollama LLM decisions, VWAP/IBS intraday rotation, and a live dashboard.
+
+- **Location:** `finance-vibe/`
+- **Quick start:** `finance-vibe/start-paper-bot.ps1` (Windows, before 9:30 AM ET)
+- **Setup guide:** `finance-vibe/user.md`
+- **Architecture:** `finance-vibe/architecture.md`
+
 ## Polyglot system (Finance Vibe + FinSight AI)
 
 The combined microservice architecture lives in `polyglot-system/`.
