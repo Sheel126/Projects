@@ -68,12 +68,40 @@ def has_quality_bias(snap: TickerSnapshot) -> bool:
     return bool(vibe_ok and conv_ok)
 
 
+def _has_cobra_ab(snap: TickerSnapshot) -> bool:
+    g = snap.coiled_cobra_grade or ""
+    return "A" in g or "B" in g
+
+
+def _price_action_confirm(snap: TickerSnapshot) -> bool:
+    """VWAP or ORB confirmation — RVOL alone is never enough."""
+    vwap_ok = (
+        snap.price_vs_vwap_pct is not None
+        and snap.price_vs_vwap_pct >= config.VWAP_BUY_BELOW_PCT
+    )
+    orb_up = snap.orb_signal == "ORB_BREAKOUT_UP"
+    return bool(vwap_ok or orb_up)
+
+
+def _strength_structure_ok(snap: TickerSnapshot, chg: float) -> bool:
+    """Day-4 strength structural gate.
+
+    SETUP_LONG or cobra A/B required for open% > +1.0%.
+    PENDING alone only allowed if open% <= +1.0% AND VWAP/ORB confirm.
+    """
+    if snap.setup_type == "SETUP_LONG" or _has_cobra_ab(snap):
+        return True
+    pending = bool(snap.setup_type and str(snap.setup_type).startswith("PENDING"))
+    if pending and chg <= 1.0:
+        return _price_action_confirm(snap)
+    return False
+
+
 def is_freefall(snap: TickerSnapshot) -> bool:
-    """Reject catching knives that are dumping hard without A-grade coil."""
+    """Reject catching knives that are dumping hard without SETUP_LONG / cobra A."""
     chg = snap.change_from_open_pct or 0.0
     if chg > config.MAX_DIP_BUY_PCT:
         return False
-    # Allow deep dips only for A-grade coils / confirmed SETUP_LONG
     if snap.setup_type == "SETUP_LONG":
         return False
     if snap.coiled_cobra_grade and "A" in snap.coiled_cobra_grade:
@@ -82,30 +110,30 @@ def is_freefall(snap: TickerSnapshot) -> bool:
 
 
 def timing_constructive_strength(snap: TickerSnapshot) -> bool:
-    """Green / flat names with participation — not chase-only noise."""
+    """Strength path: 0..+STRENGTH_MAX open% with structure + VWAP/ORB.
+
+    RVOL may boost score elsewhere but is NOT sufficient confirmation for
+    open% >= +2.0% (and is never the sole gate here).
+    """
     if not config.ALLOW_STRENGTH_BUYS:
         return False
     chg = snap.change_from_open_pct or 0.0
-    if chg < 0:
+    if chg < 0 or chg > config.STRENGTH_MAX_OPEN_PCT:
         return False
-    if chg > 2.2:
-        return False  # already extended from open
-    rvol = snap.rvol if snap.rvol is not None else 1.0
-    if rvol < config.MIN_RVOL:
+    if not _strength_structure_ok(snap, chg):
         return False
-    above_vwap = snap.price_vs_vwap_pct is not None and snap.price_vs_vwap_pct >= -0.05
-    orb_up = snap.orb_signal == "ORB_BREAKOUT_UP"
-    return above_vwap or orb_up
+    if not _price_action_confirm(snap):
+        return False
+    return True
 
 
 def timing_quality_pullback(snap: TickerSnapshot) -> bool:
-    """Mild red into structure / value — timing for research setups."""
+    """Pullback path: MAX_DIP..+PULLBACK_MAX with quality bias; not collapsing IBS."""
     chg = snap.change_from_open_pct or 0.0
-    if chg < config.MAX_DIP_BUY_PCT or chg > 0.35:
+    if chg < config.MAX_DIP_BUY_PCT or chg > config.PULLBACK_MAX_OPEN_PCT:
         return False
     if not has_research_structure(snap) and (snap.conviction or 0) < config.MIN_BUY_CONVICTION:
         return False
-    # Prefer reclaim / near value: below or near VWAP, not collapsing IBS
     if snap.ibs is not None and snap.ibs < 0.08:
         return False
     return True
@@ -120,11 +148,10 @@ def compute_active_score(snap: TickerSnapshot) -> float:
 
     Rewards research structure / RS / vibe / volume.
     Mild timing bonus for pullbacks OR constructive strength.
-    Penalizes freefalls and extended chases.
+    Penalizes freefalls and extended chases. RVOL boosts score only.
     """
     score = 0.0
 
-    # Research conviction (already packs vibe/setup/cobra/ML)
     score += min(40.0, (snap.conviction or 0) * 0.40)
 
     if snap.setup_type == "SETUP_LONG":
@@ -148,7 +175,6 @@ def compute_active_score(snap: TickerSnapshot) -> float:
         elif snap.vibe_score <= 2:
             score -= 10.0
 
-    # Relative strength vs QQQ (research core; was unused by bot)
     if snap.rs_63d is not None:
         if snap.rs_63d > 0:
             score += min(18.0, snap.rs_63d * 80.0)
@@ -158,7 +184,6 @@ def compute_active_score(snap: TickerSnapshot) -> float:
     if snap.vs_qqq_pct is not None and snap.vs_qqq_pct > 0:
         score += min(8.0, snap.vs_qqq_pct * 2.0)
 
-    # Relative volume participation
     rvol = snap.rvol
     if rvol is not None:
         if rvol >= 1.5:
@@ -167,30 +192,28 @@ def compute_active_score(snap: TickerSnapshot) -> float:
             score += 10.0
         elif rvol >= config.MIN_RVOL:
             score += 5.0
-        elif rvol < 0.6:
+        elif rvol < config.MIN_RVOL_HARD_FLOOR:
             score -= 8.0
 
     if snap.ml_rank is not None and snap.ml_rank <= 5:
         score += max(0.0, 10.0 - snap.ml_rank * 1.5)
 
-    # Timing — pullback into quality OR constructive strength
     chg = snap.change_from_open_pct or 0.0
     if timing_quality_pullback(snap):
         score += 10.0
         if chg <= -0.25:
-            score += min(8.0, abs(chg) * 3.0)  # mild dip bonus only
+            score += min(8.0, abs(chg) * 3.0)
     elif timing_constructive_strength(snap):
         score += 12.0
         if snap.price_vs_vwap_pct is not None and snap.price_vs_vwap_pct >= 0:
             score += 4.0
 
-    # Penalties
     if is_freefall(snap):
         score -= 25.0
     if chg <= -4.0:
         score -= 15.0
     if chg >= 3.0:
-        score -= 12.0  # chase
+        score -= 12.0
     rsi = snap.rsi
     if rsi is not None:
         if rsi > 72:
@@ -245,48 +268,127 @@ def should_quick_sell(snap: TickerSnapshot) -> tuple[bool, str, float]:
     return False, "", 0.0
 
 
-def _buy_eligible(snap: TickerSnapshot, ctx: CycleContext, open_count: int) -> bool:
-    """Quality hybrid eligibility — research thesis + timing, not any red candle."""
-    if ctx.halted or snap.in_position or snap.has_open_buy_order:
-        return False
+def _score_floor(snap: TickerSnapshot) -> float:
+    """SETUP_LONG / cobra A may pass at lower score; others use ACTIVE_MIN_BUY_SCORE."""
+    if snap.setup_type == "SETUP_LONG":
+        return config.ACTIVE_SETUP_MIN_BUY_SCORE
+    if snap.coiled_cobra_grade and "A" in snap.coiled_cobra_grade:
+        return config.ACTIVE_SETUP_MIN_BUY_SCORE
+    return config.ACTIVE_MIN_BUY_SCORE
+
+
+def explain_buy_eligibility(
+    snap: TickerSnapshot, ctx: CycleContext, open_count: int,
+) -> dict:
+    """Structured PASS/FAIL reasons for observability / post-day audit."""
+    path = None
+    if timing_constructive_strength(snap):
+        path = "strength"
+    elif timing_quality_pullback(snap):
+        path = "pullback"
+
+    reasons: list[str] = []
+    ok = True
+
+    if ctx.halted:
+        ok = False
+        reasons.append("halted")
+    if getattr(ctx, "entries_blocked", False):
+        ok = False
+        reasons.append("entries_blocked")
+    if snap.in_position:
+        ok = False
+        reasons.append("in_position")
+    if snap.has_open_buy_order:
+        ok = False
+        reasons.append("open_buy_order")
     if open_count >= config.MAX_POSITIONS:
-        return False
+        ok = False
+        reasons.append(f"max_positions_{config.MAX_POSITIONS}")
     if snap.price <= 0:
-        return False
+        ok = False
+        reasons.append("bad_price")
 
     stop = preferred_stop(snap)
     if stop is None or stop >= snap.price:
-        return False
+        ok = False
+        reasons.append("invalid_stop")
 
     rsi = snap.rsi
     if rsi is not None and (rsi < config.ACTIVE_MIN_RSI or rsi > config.ACTIVE_MAX_RSI):
-        return False
+        ok = False
+        reasons.append(f"rsi_{rsi:.0f}")
 
-    if config.BUY_MODE == "dip":
-        # Legacy knife mode (explicit opt-in only)
+    if config.BUY_MODE != "dip":
+        if config.REQUIRE_STRUCTURE and not has_quality_bias(snap):
+            ok = False
+            reasons.append("no_quality_bias")
+        if is_freefall(snap):
+            ok = False
+            reasons.append("freefall")
+        if not has_valid_timing(snap):
+            ok = False
+            reasons.append("timing_fail")
+        if snap.rvol is not None and snap.rvol < config.MIN_RVOL_HARD_FLOOR:
+            ok = False
+            reasons.append(f"dead_rvol_{snap.rvol:.2f}")
+        score = snap.active_score or compute_active_score(snap)
+        floor = _score_floor(snap)
+        if score < floor:
+            ok = False
+            reasons.append(f"score_{score:.0f}<{floor:.0f}")
+        elif ok:
+            reasons.append("PASS")
+    else:
         chg = snap.change_from_open_pct or 0.0
         score = snap.active_score or compute_active_score(snap)
-        return chg <= config.DIP_BUY_FROM_OPEN_PCT or score >= config.ACTIVE_MIN_BUY_SCORE
+        if not (chg <= config.DIP_BUY_FROM_OPEN_PCT or score >= config.ACTIVE_MIN_BUY_SCORE):
+            ok = False
+            reasons.append("dip_mode_fail")
+        elif ok:
+            reasons.append("PASS")
 
-    # --- quality mode (default) ---
-    if config.REQUIRE_STRUCTURE and not has_quality_bias(snap):
-        return False
+    return {
+        "ticker": snap.ticker,
+        "pass": ok and (reasons[-1] == "PASS" if reasons else False),
+        "path": path,
+        "open_pct": snap.change_from_open_pct,
+        "price": snap.price,
+        "vwap_pct": snap.price_vs_vwap_pct,
+        "rvol": snap.rvol,
+        "quality_score": snap.active_score or compute_active_score(snap),
+        "setup": snap.setup_type,
+        "cobra": snap.coiled_cobra_grade,
+        "freefall": is_freefall(snap),
+        "qqq_from_open": ctx.benchmark_change_from_open_pct,
+        "position_count": open_count,
+        "day_pnl_pct": ctx.day_pnl_pct,
+        "reasons": reasons,
+        "reject_reason": None if (ok and reasons and reasons[-1] == "PASS") else (
+            reasons[-1] if reasons else "unknown"
+        ),
+    }
 
-    if is_freefall(snap):
-        return False
 
-    if not has_valid_timing(snap):
-        return False
+def _buy_eligible(snap: TickerSnapshot, ctx: CycleContext, open_count: int) -> bool:
+    """Quality hybrid eligibility — deterministic final authority (Day-4).
 
-    # Soft participation filter (skip ultra-dead names)
-    if snap.rvol is not None and snap.rvol < (config.MIN_RVOL * 0.7):
-        return False
+    Strength path (documented):
+      0 <= open% <= STRENGTH_MAX (+3.5 default)
+      AND (SETUP_LONG or cobra A/B; PENDING only if open%<=+1.0)
+      AND (VWAP >= VWAP_BUY_BELOW_PCT or ORB_BREAKOUT_UP)
+      RVOL alone is NEVER sufficient for strength confirmation.
 
-    score = snap.active_score or compute_active_score(snap)
-    if score < config.ACTIVE_MIN_BUY_SCORE:
-        return False
+    Pullback path:
+      MAX_DIP <= open% <= PULLBACK_MAX
+      AND quality bias / structure
+      AND not freefall without SETUP_LONG/cobra A
+      AND IBS not collapsing (<0.08)
 
-    return True
+    Score: ACTIVE_MIN_BUY_SCORE ranks; SETUP_LONG/cobra A may pass at SETUP floor.
+    """
+    detail = explain_buy_eligibility(snap, ctx, open_count)
+    return bool(detail["pass"])
 
 
 def _pick_buys(

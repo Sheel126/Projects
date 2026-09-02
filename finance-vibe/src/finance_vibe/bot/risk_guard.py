@@ -43,7 +43,7 @@ class RiskGuard:
         if (ctx.halted or getattr(ctx, "entries_blocked", False)) and act == "BUY":
             return RiskResult(
                 False, action,
-                notes="Entries blocked (halt or EOD) — no new buys",
+                notes="Entries blocked (halt, day-loss, regime, or EOD) — no new buys",
             )
 
         if act == "BUY":
@@ -103,6 +103,10 @@ class RiskGuard:
             if deploy_pct <= 0:
                 deploy_pct = self.risk_pct * 3
             deploy_pct = min(deploy_pct, self.max_position_pct)
+            # Day-loss caution: no size increase above baseline active position %
+            if self.day_loss_caution(ctx.day_pnl_pct):
+                baseline = config.ACTIVE_POSITION_PCT / 100.0
+                deploy_pct = min(deploy_pct, baseline)
 
             notional = ctx.account_equity * deploy_pct
             notional = min(notional, ctx.account_cash * 0.98)
@@ -150,3 +154,11 @@ class RiskGuard:
         pnl_pct = (current_equity - day_start_equity) / day_start_equity
         halted = pnl_pct <= -config.DAILY_LOSS_HALT_PCT
         return halted, pnl_pct * 100
+
+    def day_loss_caution(self, day_pnl_pct: float) -> bool:
+        """Soft breaker: day PnL at/below caution threshold (e.g. -0.5%)."""
+        return day_pnl_pct <= config.DAY_CAUTION_PCT
+
+    def day_loss_blocks_buys(self, day_pnl_pct: float) -> bool:
+        """Hard breaker: stop NEW buys for rest of session (e.g. -1.0%). Sells/EOD still OK."""
+        return day_pnl_pct <= config.DAY_BLOCK_BUYS_PCT

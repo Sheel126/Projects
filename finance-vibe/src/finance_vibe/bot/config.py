@@ -45,9 +45,9 @@ SWING_PROFILE = os.getenv("BOT_SWING_PROFILE", "high_beta")
 BENCHMARK = os.getenv("BOT_BENCHMARK", "QQQ")
 STRATEGY_NOTES = os.getenv(
     "BOT_STRATEGY_NOTES",
-    "Quality hybrid: buy Finance-Vibe setups/cobra/vibe leaders with volume, "
-    "not free-falling dips. Mild pullbacks OR constructive strength OK. "
-    "TP ~1.2%, SL ~1.8%, flat by 3:55. Block buys when QQQ red or after 3:30.",
+    "Day-4 quality hybrid: buy Finance-Vibe setups/cobra/vibe leaders. "
+    "Pullbacks or strength (SETUP/cobra + VWAP/ORB; RVOL not sole confirm). "
+    "TP ~1.2%, SL ~1.8%, flat by 3:55. Block buys when QQQ red, after 3:30, or day PnL <= -1%.",
 )
 
 # Daily-active trading parameters (Day-3: 5 slots, ~13% each)
@@ -59,7 +59,8 @@ QUICK_PROFIT_PCT = float(os.getenv("BOT_QUICK_PROFIT_PCT", "1.2"))
 QUICK_STOP_LOSS_PCT = float(os.getenv("BOT_QUICK_STOP_LOSS_PCT", "1.8"))
 ACTIVE_POSITION_PCT = float(os.getenv("BOT_ACTIVE_POSITION_PCT", "13"))
 ACTIVE_MAX_BUYS_PER_CYCLE = int(os.getenv("BOT_ACTIVE_MAX_BUYS_PER_CYCLE", "2"))
-ACTIVE_MIN_BUY_SCORE = float(os.getenv("BOT_ACTIVE_MIN_BUY_SCORE", "42"))
+ACTIVE_MIN_BUY_SCORE = float(os.getenv("BOT_ACTIVE_MIN_BUY_SCORE", "38"))
+ACTIVE_SETUP_MIN_BUY_SCORE = float(os.getenv("BOT_ACTIVE_SETUP_MIN_BUY_SCORE", "30"))
 ACTIVE_MIN_RSI = float(os.getenv("BOT_ACTIVE_MIN_RSI", "30"))
 ACTIVE_MAX_RSI = float(os.getenv("BOT_ACTIVE_MAX_RSI", "68"))
 ACTIVE_SELL_RSI = float(os.getenv("BOT_ACTIVE_SELL_RSI", "72"))
@@ -72,8 +73,8 @@ WHOLE_SHARES_ONLY = os.getenv("BOT_WHOLE_SHARES_ONLY", "true").lower() in (
 
 # Quality hybrid buys (research stack + timing) — not pure knife-catching
 BUY_MODE = os.getenv("BOT_BUY_MODE", "quality").strip().lower()
-MAX_DIP_BUY_PCT = float(os.getenv("BOT_MAX_DIP_BUY_PCT", "-3.0"))
-MIN_RVOL = float(os.getenv("BOT_MIN_RVOL", "0.85"))
+MAX_DIP_BUY_PCT = float(os.getenv("BOT_MAX_DIP_BUY_PCT", "-2.5"))
+MIN_RVOL = float(os.getenv("BOT_MIN_RVOL", "0.75"))
 MIN_BUY_CONVICTION = float(os.getenv("BOT_MIN_BUY_CONVICTION", "35"))
 MIN_BUY_VIBE = float(os.getenv("BOT_MIN_BUY_VIBE", "5"))
 REQUIRE_STRUCTURE = os.getenv("BOT_REQUIRE_STRUCTURE", "true").lower() in (
@@ -98,13 +99,21 @@ EOD_FLAT_MINUTE = int(os.getenv("BOT_EOD_FLAT_MINUTE", "55"))
 VWAP_BUY_BELOW_PCT = float(os.getenv("BOT_VWAP_BUY_BELOW_PCT", "-0.1"))
 IBS_OVERSOLD = float(os.getenv("BOT_IBS_OVERSOLD", "0.25"))
 
-# Risk (Day-3: five ~13% positions)
+# Risk (Day-4: five ~13% positions + intraday day-loss breakers)
 RISK_PER_TRADE_PCT = float(os.getenv("RISK_PER_TRADE_PCT", "0.035"))
 MAX_POSITIONS = int(os.getenv("MAX_POSITIONS", "5"))
 MAX_POSITION_PCT = float(os.getenv("MAX_POSITION_PCT", "0.18"))
 DAILY_LOSS_HALT_PCT = float(os.getenv("DAILY_LOSS_HALT_PCT", "0.05"))
+# Day PnL % thresholds (negative). Caution warns; block stops NEW buys only.
+DAY_CAUTION_PCT = float(os.getenv("BOT_DAY_CAUTION_PCT", "-0.5"))
+DAY_BLOCK_BUYS_PCT = float(os.getenv("BOT_DAY_BLOCK_BUYS_PCT", "-1.0"))
 MIN_ORDER_NOTIONAL = float(os.getenv("MIN_ORDER_NOTIONAL", "50"))
 CYCLE_MINUTES = int(os.getenv("CYCLE_MINUTES", "20"))
+
+# Day-4 quality unlock defaults (strength window + soft score)
+STRENGTH_MAX_OPEN_PCT = float(os.getenv("BOT_STRENGTH_MAX_OPEN_PCT", "3.5"))
+PULLBACK_MAX_OPEN_PCT = float(os.getenv("BOT_PULLBACK_MAX_OPEN_PCT", "0.5"))
+MIN_RVOL_HARD_FLOOR = float(os.getenv("BOT_MIN_RVOL_HARD_FLOOR", "0.6"))  # dead-name floor
 
 # Dashboard
 DASHBOARD_HOST = os.getenv("BOT_DASHBOARD_HOST", "127.0.0.1")

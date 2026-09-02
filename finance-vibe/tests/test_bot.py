@@ -222,6 +222,71 @@ class TestOllamaAgent:
         assert snap.active_score >= 40
         assert _buy_eligible(snap, _ctx(watchlist=[snap]), 0)
 
+    def test_nvda_strength_a_setup_at_2_6_passes(self, monkeypatch):
+        from finance_vibe.bot.daily_activity import _buy_eligible, compute_active_score
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.BUY_MODE", "quality")
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.REQUIRE_STRUCTURE", True)
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.ALLOW_STRENGTH_BUYS", True)
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.STRENGTH_MAX_OPEN_PCT", 3.5)
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.ACTIVE_MIN_BUY_SCORE", 38)
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.ACTIVE_SETUP_MIN_BUY_SCORE", 30)
+        snap = _snapshot("NVDA", price=120.0, stop=115.0, setup="SETUP_LONG")
+        snap.change_from_open_pct = 2.6
+        snap.price_vs_vwap_pct = 0.05
+        snap.rvol = 1.0
+        snap.vibe_score = 9
+        snap.conviction = 70
+        snap.coiled_cobra_grade = "A - Coil"
+        snap.rs_63d = 0.06
+        snap.rsi = 55
+        snap.active_score = compute_active_score(snap)
+        assert _buy_eligible(snap, _ctx(watchlist=[snap]), 0)
+
+    def test_strength_no_setup_fails(self, monkeypatch):
+        from finance_vibe.bot.daily_activity import _buy_eligible
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.BUY_MODE", "quality")
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.REQUIRE_STRUCTURE", True)
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.ALLOW_STRENGTH_BUYS", True)
+        snap = _snapshot("TSLA", price=200.0, stop=190.0)
+        snap.setup_type = None
+        snap.coiled_cobra_grade = None
+        snap.change_from_open_pct = 3.0
+        snap.price_vs_vwap_pct = 0.5
+        snap.rvol = 2.0
+        snap.vibe_score = 8
+        snap.conviction = 60
+        snap.active_score = 80
+        snap.rsi = 50
+        assert not _buy_eligible(snap, _ctx(watchlist=[snap]), 0)
+
+    def test_strength_rvol_alone_fails(self, monkeypatch):
+        from finance_vibe.bot.daily_activity import _buy_eligible
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.BUY_MODE", "quality")
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.ALLOW_STRENGTH_BUYS", True)
+        snap = _snapshot("AMD", price=100.0, stop=95.0, setup="SETUP_LONG")
+        snap.change_from_open_pct = 2.5
+        snap.price_vs_vwap_pct = -0.5  # below VWAP
+        snap.orb_signal = None
+        snap.rvol = 3.0  # high RVOL alone must not unlock
+        snap.vibe_score = 8
+        snap.conviction = 60
+        snap.active_score = 90
+        snap.rsi = 50
+        assert not _buy_eligible(snap, _ctx(watchlist=[snap]), 0)
+
+    def test_mild_pullback_setup_passes(self, monkeypatch):
+        from finance_vibe.bot.daily_activity import _buy_eligible, compute_active_score
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.BUY_MODE", "quality")
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.ACTIVE_MIN_BUY_SCORE", 38)
+        snap = _snapshot("META", price=500.0, stop=490.0, setup="SETUP_LONG")
+        snap.change_from_open_pct = -1.0
+        snap.rvol = 1.1
+        snap.vibe_score = 6
+        snap.conviction = 50
+        snap.rsi = 45
+        snap.active_score = compute_active_score(snap)
+        assert _buy_eligible(snap, _ctx(watchlist=[snap]), 0)
+
     def test_compute_relative_volume(self):
         import pandas as pd
         from finance_vibe.bot.signal_engine import compute_relative_volume
@@ -413,26 +478,46 @@ class TestHealth:
         from finance_vibe.bot.executor import Executor
         from finance_vibe.bot.models import RiskResult
 
-        cancelled: list[str] = []
+        events: list[str] = []
 
         class FakeAlpaca:
             configured = True
+            _orders: list = []
+            _pos_qty = 10.0
 
-            def cancel_orders_for_symbol(self, symbol: str, wait_sec: float = 1.0) -> int:
-                cancelled.append(symbol)
-                return 2
+            def get_open_sell_orders(self, symbol):
+                return [
+                    o for o in self.get_open_orders(symbol)
+                    if "SELL" in str(o.get("side", "")).upper()
+                ]
+
+            def get_position_qty(self, symbol):
+                return self._pos_qty
 
             def get_open_orders(self, symbol=None):
-                return []
+                return list(self._orders)
+
+            def cancel_and_wait_clear(self, symbol, timeout_sec=5.0):
+                events.append(f"cancel_wait:{symbol}")
+                self._orders = []
+                return True
+
+            def cancel_orders_for_symbol(self, symbol, wait_sec=1.0, **kw):
+                events.append(f"cancel:{symbol}")
+                self._orders = []
+                return 2
 
             def get_positions(self):
-                return [{"symbol": "META", "qty": 10}]
+                if self._pos_qty <= 0:
+                    return []
+                return [{"symbol": "META", "qty": self._pos_qty}]
 
             def wait_for_flat(self, symbol, timeout_sec=45.0):
+                self._pos_qty = 0.0
                 return True
 
             def close_position(self, symbol):
-                cancelled.append(f"close:{symbol}")
+                events.append(f"close:{symbol}")
                 return {"id": "o1", "status": "filled", "filled_avg_price": 500}
 
             def get_order(self, order_id):
@@ -448,7 +533,9 @@ class TestHealth:
                 raise AssertionError("not expected")
 
         monkeypatch.setattr("finance_vibe.bot.executor.config.USE_BROKER_STOPS", False)
-        ex = Executor(alpaca=FakeAlpaca(), store=tmp_db, dry_run=False)
+        fake = FakeAlpaca()
+        fake._orders = [{"id": "b1", "side": "BUY", "status": "new", "symbol": "META"}]
+        ex = Executor(alpaca=fake, store=tmp_db, dry_run=False)
         risk = RiskResult(
             approved=True,
             action=TradeAction("META", "SELL", pct=100, reason="take profit"),
@@ -456,7 +543,8 @@ class TestHealth:
             notional=1000,
         )
         ex.execute(risk, cycle_id=1, decision_id=1, price=500.0)
-        assert cancelled == ["META", "close:META"]
+        assert "cancel_wait:META" in events
+        assert "close:META" in events
 
     def test_executor_no_broker_stops_in_daily_active(self, monkeypatch):
         from finance_vibe.bot.executor import Executor
@@ -469,17 +557,28 @@ class TestHealth:
 
         class FakeAlpaca:
             configured = True
+            _pos_qty = 10.0
 
-            def cancel_orders_for_symbol(self, symbol, wait_sec=1.0):
-                return 0
+            def get_open_sell_orders(self, symbol):
+                return []
+
+            def get_position_qty(self, symbol):
+                return self._pos_qty
 
             def get_open_orders(self, symbol=None):
                 return []
 
+            def cancel_and_wait_clear(self, symbol, timeout_sec=5.0):
+                return True
+
+            def cancel_orders_for_symbol(self, symbol, wait_sec=1.0, **kw):
+                return 0
+
             def get_positions(self):
-                return [{"symbol": "NVDA", "qty": 10}]
+                return [{"symbol": "NVDA", "qty": self._pos_qty}] if self._pos_qty else []
 
             def wait_for_flat(self, symbol, timeout_sec=45.0):
+                self._pos_qty = 0.0
                 return True
 
             def close_position(self, symbol):
@@ -489,12 +588,289 @@ class TestHealth:
                 return {"id": order_id, "status": "filled", "filled_avg_price": 100}
 
         tmp_db.add_pending_sell("NVDA")
-        ex = Executor(alpaca=FakeAlpaca(), store=tmp_db, dry_run=False)
+        fake = FakeAlpaca()
+        ex = Executor(alpaca=fake, store=tmp_db, dry_run=False)
         n = ex.retry_pending_sells(
             [{"symbol": "NVDA", "qty": 10}], cycle_id=1,
         )
         assert n == 1
         assert tmp_db.get_pending_sell_symbols() == []
+
+    def test_no_duplicate_sell_if_open_sell_exists(self, tmp_db, monkeypatch):
+        from finance_vibe.bot.executor import Executor
+        from finance_vibe.bot.models import RiskResult
+
+        closes = []
+
+        class FakeAlpaca:
+            configured = True
+
+            def get_open_sell_orders(self, symbol):
+                return [{"id": "sell1", "side": "SELL", "status": "new", "symbol": "AAPL"}]
+
+            def get_position_qty(self, symbol):
+                return 5.0
+
+            def get_open_orders(self, symbol=None):
+                return self.get_open_sell_orders(symbol)
+
+            def cancel_and_wait_clear(self, symbol, timeout_sec=5.0):
+                raise AssertionError("should not cancel when reusing sell")
+
+            def close_position(self, symbol):
+                closes.append(symbol)
+                return {"id": "x", "status": "filled"}
+
+            def get_positions(self):
+                return [{"symbol": "AAPL", "qty": 5}]
+
+            def wait_for_flat(self, symbol, timeout_sec=45.0):
+                return False
+
+            def get_order(self, order_id):
+                return {"id": order_id, "status": "new", "filled_avg_price": 0}
+
+        ex = Executor(alpaca=FakeAlpaca(), store=tmp_db, dry_run=False)
+        risk = RiskResult(
+            approved=True,
+            action=TradeAction("AAPL", "SELL", pct=100),
+            qty=5, notional=500,
+        )
+        order = ex.execute(risk, 1, 1, 100.0)
+        assert order["id"] == "sell1"
+        assert closes == []
+        assert "AAPL" in tmp_db.get_pending_sell_symbols()  # in-flight new
+
+    def test_flatten_idempotent_repeated_call(self, tmp_db):
+        from finance_vibe.bot.executor import Executor
+
+        class FakeAlpaca:
+            configured = True
+            closed = 0
+            _qty = 10.0
+
+            def get_open_sell_orders(self, symbol):
+                return []
+
+            def get_position_qty(self, symbol):
+                return self._qty
+
+            def get_open_orders(self, symbol=None):
+                return []
+
+            def cancel_and_wait_clear(self, symbol, timeout_sec=5.0):
+                return True
+
+            def get_positions(self):
+                return [{"symbol": "TSLA", "qty": self._qty}] if self._qty > 0 else []
+
+            def wait_for_flat(self, symbol, timeout_sec=45.0):
+                self._qty = 0.0
+                return True
+
+            def close_position(self, symbol):
+                self.closed += 1
+                self._qty = 0.0
+                return {"id": f"c{self.closed}", "status": "filled"}
+
+            def get_order(self, order_id):
+                return {"id": order_id, "status": "filled"}
+
+        fake = FakeAlpaca()
+        ex = Executor(alpaca=fake, store=tmp_db, dry_run=False)
+        n1 = ex.flatten_positions([{"symbol": "TSLA", "qty": 10}], cycle_id=1)
+        n2 = ex.flatten_positions([], cycle_id=1)  # already empty list
+        n3 = ex.flatten_positions(
+            [{"symbol": "TSLA", "qty": 10}], cycle_id=1,
+        )  # live qty 0 → noop
+        assert n1 == 1
+        assert fake.closed == 1
+        assert n3 == 0  # no live qty
+
+    def test_partial_fill_sells_remaining_qty(self, tmp_db):
+        from finance_vibe.bot.executor import Executor
+
+        submitted_qty: list[float] = []
+
+        class FakeAlpaca:
+            configured = True
+            _qty = 7.0  # remaining after partial fill
+
+            def get_open_sell_orders(self, symbol):
+                return []
+
+            def get_position_qty(self, symbol):
+                return self._qty
+
+            def get_open_orders(self, symbol=None):
+                return []
+
+            def cancel_and_wait_clear(self, symbol, timeout_sec=5.0):
+                return True
+
+            def get_positions(self):
+                return [{"symbol": "AMD", "qty": self._qty}]
+
+            def wait_for_flat(self, symbol, timeout_sec=45.0):
+                self._qty = 0.0
+                return True
+
+            def close_position(self, symbol):
+                submitted_qty.append(self._qty)
+                self._qty = 0.0
+                return {"id": "p1", "status": "filled"}
+
+            def submit_market_order(self, symbol, qty, side):
+                submitted_qty.append(qty)
+                return {"id": "p2", "status": "new"}
+
+            def get_order(self, order_id):
+                return {"id": order_id, "status": "filled"}
+
+        ex = Executor(alpaca=FakeAlpaca(), store=tmp_db, dry_run=False)
+        # Request full 10 but live remaining is 7
+        order = ex._submit_sell("AMD", 10.0)
+        assert order["status"] == "filled"
+        assert submitted_qty == [7.0]
+
+    def test_cancel_timeout_raises_no_blind_sell(self, tmp_db):
+        from finance_vibe.bot.executor import Executor
+        import pytest
+
+        class FakeAlpaca:
+            configured = True
+
+            def get_open_sell_orders(self, symbol):
+                return []
+
+            def get_position_qty(self, symbol):
+                return 5.0
+
+            def get_open_orders(self, symbol=None):
+                return [{"id": "stuck", "side": "BUY", "status": "pending_cancel"}]
+
+            def cancel_and_wait_clear(self, symbol, timeout_sec=5.0):
+                return False  # still open
+
+            def close_position(self, symbol):
+                raise AssertionError("must not close while orders stuck")
+
+            def get_positions(self):
+                return [{"symbol": "META", "qty": 5}]
+
+        ex = Executor(alpaca=FakeAlpaca(), store=tmp_db, dry_run=False)
+        with pytest.raises(RuntimeError, match="cancel timeout"):
+            ex._submit_sell("META", 5.0)
+
+    def test_restart_while_sell_pending_reuses_open_sell(self, tmp_db):
+        from finance_vibe.bot.executor import Executor
+
+        class FakeAlpaca:
+            configured = True
+            close_calls = 0
+
+            def get_open_sell_orders(self, symbol):
+                return [{"id": "pending_sell", "side": "SELL", "status": "pending_new"}]
+
+            def get_position_qty(self, symbol):
+                return 3.0
+
+            def get_open_orders(self, symbol=None):
+                return self.get_open_sell_orders(symbol)
+
+            def close_position(self, symbol):
+                self.close_calls += 1
+                return {"id": "dup", "status": "new"}
+
+            def get_positions(self):
+                return [{"symbol": "NVDA", "qty": 3}]
+
+            def wait_for_flat(self, symbol, timeout_sec=45.0):
+                return False
+
+            def get_order(self, order_id):
+                return {"id": order_id, "status": "pending_new"}
+
+        tmp_db.add_pending_sell("NVDA")
+        fake = FakeAlpaca()
+        ex = Executor(alpaca=fake, store=tmp_db, dry_run=False)
+        n = ex.retry_pending_sells([{"symbol": "NVDA", "qty": 3}], cycle_id=2)
+        assert n == 1
+        assert fake.close_calls == 0
+        # Still pending because in-flight
+        assert "NVDA" in tmp_db.get_pending_sell_symbols()
+
+    def test_stale_cancel_then_replacement_sell(self, tmp_db):
+        from finance_vibe.bot.executor import Executor
+
+        class FakeAlpaca:
+            configured = True
+            phase = "stale"
+
+            def get_open_sell_orders(self, symbol):
+                return []
+
+            def get_position_qty(self, symbol):
+                return 4.0
+
+            def get_open_orders(self, symbol=None):
+                if self.phase == "stale":
+                    return [{"id": "stale_buy", "side": "BUY", "status": "new"}]
+                return []
+
+            def cancel_and_wait_clear(self, symbol, timeout_sec=5.0):
+                self.phase = "clear"
+                return True
+
+            def close_position(self, symbol):
+                assert self.phase == "clear"
+                return {"id": "replacement", "status": "filled"}
+
+            def get_positions(self):
+                return [{"symbol": "HOOD", "qty": 4}]
+
+            def wait_for_flat(self, symbol, timeout_sec=45.0):
+                return True
+
+            def get_order(self, order_id):
+                return {"id": order_id, "status": "filled"}
+
+        ex = Executor(alpaca=FakeAlpaca(), store=tmp_db, dry_run=False)
+        order = ex._submit_sell("HOOD", 4.0)
+        assert order["id"] == "replacement"
+
+    def test_day_loss_block_and_caution(self, monkeypatch):
+        from finance_vibe.bot.risk_guard import RiskGuard
+        monkeypatch.setattr("finance_vibe.bot.risk_guard.config.DAY_CAUTION_PCT", -0.5)
+        monkeypatch.setattr("finance_vibe.bot.risk_guard.config.DAY_BLOCK_BUYS_PCT", -1.0)
+        monkeypatch.setattr("finance_vibe.bot.risk_guard.is_market_open", lambda: True)
+        monkeypatch.setattr("finance_vibe.bot.risk_guard.is_late_entry_window", lambda: False)
+        guard = RiskGuard()
+        assert guard.day_loss_caution(-0.5)
+        assert not guard.day_loss_blocks_buys(-0.5)
+        assert guard.day_loss_blocks_buys(-1.0)
+
+        snap = _snapshot("PLTR", setup="SETUP_LONG", stop=95.0)
+        ctx = _ctx()
+        ctx.day_pnl_pct = -1.0
+        ctx.entries_blocked = True  # runner sets this when day-loss blocks
+        buy = TradeAction("PLTR", "BUY", pct=13, stop=95.0)
+        sell_snap = _snapshot("PLTR", price=100.0)
+        sell_snap.in_position = True
+        sell_snap.position_qty = 10
+        assert not guard.validate(buy, ctx, snap, 0).approved
+        sell = TradeAction("PLTR", "SELL", pct=100)
+        assert guard.validate(sell, ctx, sell_snap, 1).approved
+
+        # Caution caps size — no increase above ACTIVE_POSITION_PCT
+        monkeypatch.setattr("finance_vibe.bot.risk_guard.config.ACTIVE_POSITION_PCT", 13)
+        ctx2 = _ctx()
+        ctx2.day_pnl_pct = -0.6
+        ctx2.entries_blocked = False
+        fat = TradeAction("PLTR", "BUY", pct=20, stop=95.0)  # would want 20%
+        risk = guard.validate(fat, ctx2, snap, 0)
+        assert risk.approved
+        assert risk.action.pct <= 13.0 + 1e-6
 
     def test_store_pending_sells(self, tmp_db):
         tmp_db.add_pending_sell("AAPL")
@@ -527,12 +903,51 @@ class TestHealth:
             2026, 9, 1, 11, 0, tzinfo=__import__("zoneinfo").ZoneInfo("America/New_York"),
         ))
         tmp_db.set_state("entries_blocked_2026-09-01", "1")
+        tmp_db.set_state("buys_blocked_day_loss_2026-09-01", "1")
         tmp_db.set_halted_today(today, True)
         report = prepare_clean_session(alpaca=FakeAlpaca(), store=tmp_db)
         assert report["equity_after"] == 99_500.0
         assert tmp_db.get_day_start_equity(today) == 99_500.0
         assert tmp_db.get_state("entries_blocked_2026-09-01") == "0"
+        assert tmp_db.get_state("buys_blocked_day_loss_2026-09-01") == "0"
         assert not tmp_db.is_halted_today(today)
+
+    def test_resume_keeps_day_start(self, tmp_db, monkeypatch):
+        from datetime import date
+        from finance_vibe.bot.session import resume_session
+
+        class FakeAlpaca:
+            configured = True
+
+            def get_account(self):
+                return {"equity": 100_300.0, "cash": 50_000.0}
+
+            def cancel_all_orders(self):
+                pass
+
+            def get_open_orders(self):
+                return []
+
+            def get_positions(self):
+                return [{"symbol": "NVDA", "qty": 10}]
+
+            def close_all_positions(self):
+                raise AssertionError("resume must not flatten")
+
+        today = date(2026, 9, 2)
+        monkeypatch.setattr(
+            "finance_vibe.bot.session.now_et",
+            lambda: __import__("datetime").datetime(
+                2026, 9, 2, 12, 0,
+                tzinfo=__import__("zoneinfo").ZoneInfo("America/New_York"),
+            ),
+        )
+        tmp_db.set_day_start_equity(today, 100_000.0)
+        tmp_db.set_state("buys_blocked_day_loss_2026-09-02", "1")
+        report = resume_session(alpaca=FakeAlpaca(), store=tmp_db)
+        assert report["day_start_equity"] == 100_000.0
+        # Resume keeps day-loss block
+        assert tmp_db.get_state("buys_blocked_day_loss_2026-09-02") == "1"
 
     def test_activity_log(self, tmp_db):
         tmp_db.log_activity("test message", phase="cycle", cycle_id=1)

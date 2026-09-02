@@ -75,7 +75,7 @@ Start-Sleep -Seconds 2
 
 if (-not $NoRunner) {
     if ($Resume) {
-        Write-Host "RESUME mode — cancel stuck orders, KEEP positions + day P&L..." -ForegroundColor Yellow
+        Write-Host 'RESUME mode - cancel stuck orders, KEEP positions + day PnL...' -ForegroundColor Yellow
         & $Python $Runner resume-session
         if ($LASTEXITCODE -ne 0) {
             Write-Host "resume-session failed." -ForegroundColor Red
@@ -84,7 +84,7 @@ if (-not $NoRunner) {
         Write-Host ""
     }
     elseif (-not $SkipPrepare) {
-        Write-Host "Preparing clean session (cancel orders, flatten, reset day P&L)..." -ForegroundColor Yellow
+        Write-Host 'Preparing clean session (cancel orders, flatten, reset day PnL)...' -ForegroundColor Yellow
         & $Python $Runner prepare-session
         if ($LASTEXITCODE -ne 0) {
             Write-Host "prepare-session failed. Fix errors or use -SkipPrepare / -Resume" -ForegroundColor Red

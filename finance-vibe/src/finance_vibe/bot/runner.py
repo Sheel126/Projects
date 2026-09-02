@@ -151,10 +151,22 @@ class TradingRunner:
             logger.warning("Daily loss halt triggered at %.2f%%", day_pnl_pct)
         halted = halted or halted_flag
 
+        # Day-4 intraday loss breakers (risk safety — not entry strategy)
+        day_loss_key = f"buys_blocked_day_loss_{today.isoformat()}"
+        if self.risk.day_loss_blocks_buys(day_pnl_pct):
+            if self.store.get_state(day_loss_key) != "1":
+                self.store.set_state(day_loss_key, "1")
+                logger.warning(
+                    "Day-loss BUY block at %.2f%% (threshold %.2f%%) — sells/EOD still allowed",
+                    day_pnl_pct, config.DAY_BLOCK_BUYS_PCT,
+                )
+        day_loss_blocks = self.store.get_state(day_loss_key) == "1"
+
         entries_blocked = (
             self.store.get_state(f"entries_blocked_{today.isoformat()}") == "1"
             or is_eod_flat_window()
             or is_late_entry_window()
+            or day_loss_blocks
         )
 
         open_orders = []
@@ -200,6 +212,19 @@ class TradingRunner:
             f"Cycle {cycle_id} started | equity=${equity:,.2f} | day P&L {day_pnl_pct:.2f}%",
             "cycle", cycle_id,
         )
+
+        if self.risk.day_loss_caution(day_pnl_pct) and not day_loss_blocks:
+            self._log(
+                f"DAY CAUTION: day P&L {day_pnl_pct:.2f}% <= {config.DAY_CAUTION_PCT}% "
+                f"— no size increase; buys still allowed if eligible",
+                "risk", cycle_id, level="warn",
+            )
+        if day_loss_blocks:
+            self._log(
+                f"DAY LOSS BLOCK: day P&L {day_pnl_pct:.2f}% — no new buys "
+                f"(threshold {config.DAY_BLOCK_BUYS_PCT}%)",
+                "risk", cycle_id, level="warn",
+            )
 
         regime_note = regime_summary(ctx.benchmark_change_from_open_pct, ctx.entries_blocked)
         if regime_note:
@@ -277,6 +302,21 @@ class TradingRunner:
             for action in sorted_actions:
                 snap = snap_map.get(action.ticker)
                 act = action.normalized_action()
+                if act == "BUY" and snap is not None:
+                    from finance_vibe.bot.daily_activity import explain_buy_eligibility
+                    detail = explain_buy_eligibility(snap, ctx, open_count)
+                    self._log(
+                        f"BUY decision {action.ticker}: "
+                        f"{'PASS' if detail['pass'] else 'FAIL'} "
+                        f"path={detail.get('path')} open%={detail.get('open_pct')} "
+                        f"vwap={detail.get('vwap_pct')} rvol={detail.get('rvol')} "
+                        f"score={detail.get('quality_score')} setup={detail.get('setup')} "
+                        f"cobra={detail.get('cobra')} freefall={detail.get('freefall')} "
+                        f"qqq={detail.get('qqq_from_open')} pos={detail.get('position_count')} "
+                        f"dayPnL={detail.get('day_pnl_pct')} "
+                        f"reason={detail.get('reject_reason') or detail.get('reasons')}",
+                        "decision", cycle_id,
+                    )
                 if act in ("BUY", "SELL"):
                     self._log(
                         f"Risk check {action.ticker} {act} {action.pct:.0f}%",
@@ -300,7 +340,7 @@ class TradingRunner:
                         orders_placed += 1
                         self._log(
                             f"Order submitted {act} {action.ticker} "
-                            f"status={order.get('status', '?')}",
+                            f"id={order.get('id')} status={order.get('status', '?')}",
                             "trade", cycle_id,
                         )
                         if risk.action.normalized_action() == "BUY":
@@ -313,13 +353,26 @@ class TradingRunner:
                         "risk", cycle_id, level="warn",
                     )
 
-            # Safety net: if EOD window and still holding, force flatten
+            # Safety net: if EOD window and still holding, force flatten (idempotent)
             if is_eod_flat_window() and config.TRADING_MODE == "daily_active":
                 remaining = self.alpaca.get_positions()
                 if remaining:
                     n = self.executor.flatten_positions(remaining, cycle_id)
-                    if n:
-                        self._log(f"EOD safety flatten: closed {n} position(s)", "eod", cycle_id)
+                    still = self.alpaca.get_positions()
+                    if still:
+                        self._log(
+                            f"EOD FLAT FAILED — still holding "
+                            f"{[p['symbol'] for p in still]} "
+                            f"(submitted {n})",
+                            "eod", cycle_id, level="error",
+                        )
+                    else:
+                        self._log(
+                            f"EOD FLAT COMPLETE — closed {n} this pass; book flat",
+                            "eod", cycle_id,
+                        )
+                else:
+                    self._log("EOD FLAT COMPLETE — book already flat", "eod", cycle_id)
 
             self.executor.ensure_stops(
                 self.alpaca.get_positions(),

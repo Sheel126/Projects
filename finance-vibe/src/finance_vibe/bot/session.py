@@ -102,6 +102,9 @@ def prepare_clean_session(
             report["day_start_equity"] = existing
 
     store.set_state(f"entries_blocked_{today.isoformat()}", "0")
+    if flatten:
+        # Morning clean start clears day-loss buy block; resume keeps it
+        store.set_state(f"buys_blocked_day_loss_{today.isoformat()}", "0")
     store.set_halted_today(today, False)
     store.clear_all_pending_sells()
     store.log_activity(

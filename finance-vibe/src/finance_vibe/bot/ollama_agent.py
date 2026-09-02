@@ -75,11 +75,12 @@ EXAMPLE (illustrative):
 SYSTEM_PROMPT_DAILY_ACTIVE = """You are a daily-active trading engine. Output ONLY valid JSON. No markdown.
 
 GOAL: Buy QUALITY Finance-Vibe setups (structure/cobra/vibe/RS), not free-falling dips.
-Mild pullbacks OR constructive green with volume are OK. Target ~TARGET% wins. Flat by EOD.
+Mild pullbacks OR constructive green with structure+VWAP/ORB are OK. Flat by EOD.
+Deterministic code re-checks every BUY — you cannot bypass risk/eligibility.
 
 STRICT ALGORITHM (follow in order):
 
-STEP 1 — HALTS / EOD
+STEP 1 — HALTS / EOD / DAY LOSS
 If account.halted=true OR account.entries_blocked=true: SELL or HOLD only. No new BUYs.
 
 STEP 2 — SELL (every in_position=true ticker)
@@ -99,13 +100,15 @@ BUY-ELIGIBLE only if ALL true:
       OR (vibe_score >= {min_vibe} AND conviction >= {min_conv})
   (2) NOT FREEFALL: change_from_open_pct > {max_dip} (unless SETUP_LONG or cobra A)
   (3) TIMING: either
-      (a) mild pullback into quality (open% between {max_dip} and +0.35), OR
-      (b) constructive strength (open% 0 to +2.2, rvol>={min_rvol}, above/near VWAP or ORB_BREAKOUT_UP)
-  (4) active_score >= {min_score}
+      (a) pullback: open% between {max_dip} and +{pullback_max}, OR
+      (b) strength: open% 0 to +{strength_max} AND (SETUP_LONG or cobra A/B)
+          AND (near/above VWAP or ORB_BREAKOUT_UP). PENDING alone only if open%<=+1.0.
+          RVOL alone is NOT enough for strength.
+  (4) active_score >= {min_score} (SETUP_LONG/cobra A may use floor {setup_score})
   (5) stop/tight_stop is a number below price
 
 Prefer HIGHEST active_score then rs_63d. Spread across sectors.
-NEVER buy just because a stock is red. NEVER buy IBS/VWAP oversold alone without quality.
+NEVER buy just because a stock is red or green. NEVER buy IBS/VWAP/RVOL alone without quality.
 - pct={pos_pct} default; pct={pos_mid} if active_score 55-69; pct={pos_hi} if active_score >= 70
 - stop MUST use stop or tight_stop from watchlist. Never invent.
 
@@ -131,9 +134,11 @@ def get_system_prompt() -> str:
             max_buys=config.ACTIVE_MAX_BUYS_PER_CYCLE,
             max_dip=config.MAX_DIP_BUY_PCT,
             min_score=config.ACTIVE_MIN_BUY_SCORE,
+            setup_score=config.ACTIVE_SETUP_MIN_BUY_SCORE,
             min_vibe=int(config.MIN_BUY_VIBE),
             min_conv=int(config.MIN_BUY_CONVICTION),
-            min_rvol=config.MIN_RVOL,
+            strength_max=config.STRENGTH_MAX_OPEN_PCT,
+            pullback_max=config.PULLBACK_MAX_OPEN_PCT,
             pos_pct=pos,
             pos_mid=round(pos * 1.15, 1),
             pos_hi=round(min(pos * 1.35, config.MAX_POSITION_PCT * 100), 1),

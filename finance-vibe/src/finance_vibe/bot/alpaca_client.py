@@ -286,8 +286,42 @@ class AlpacaClient:
             out = [o for o in out if o["symbol"] == symbol.upper()]
         return out
 
-    def cancel_orders_for_symbol(self, symbol: str, wait_sec: float = 1.0) -> int:
-        """Cancel all open orders for one symbol (frees shares for market sell)."""
+    def get_open_sell_orders(self, symbol: str) -> list[dict[str, Any]]:
+        """Open SELL orders for a symbol (any status that still locks shares)."""
+        symbol = symbol.upper()
+        return [
+            o for o in self.get_open_orders(symbol)
+            if "SELL" in str(o.get("side", "")).upper()
+        ]
+
+    def wait_until_orders_clear(
+        self,
+        symbol: str,
+        timeout_sec: float = 5.0,
+        poll_sec: float = 0.25,
+    ) -> bool:
+        """Poll until no open orders remain for symbol. Never assume cancel completed."""
+        symbol = symbol.upper()
+        deadline = time_mod.time() + timeout_sec
+        while time_mod.time() < deadline:
+            if not self.get_open_orders(symbol):
+                return True
+            time_mod.sleep(poll_sec)
+        return not self.get_open_orders(symbol)
+
+    def cancel_orders_for_symbol(
+        self,
+        symbol: str,
+        wait_sec: float = 1.0,
+        *,
+        until_clear: bool = False,
+        timeout_sec: float = 5.0,
+    ) -> int:
+        """Cancel all open orders for one symbol (frees shares for market sell).
+
+        When until_clear=True, poll until orders are gone or timeout — a cancel
+        request alone does not mean the order is clear.
+        """
         self._ensure_clients()
         symbol = symbol.upper()
         orders = self.get_open_orders(symbol)
@@ -296,9 +330,27 @@ class AlpacaClient:
                 self._trading.cancel_order_by_id(o["id"])
             except Exception as exc:
                 logger.warning("Cancel order %s %s: %s", symbol, o.get("id"), exc)
-        if orders and wait_sec > 0:
+        if not orders:
+            return 0
+        if until_clear:
+            cleared = self.wait_until_orders_clear(symbol, timeout_sec=timeout_sec)
+            if not cleared:
+                remaining = self.get_open_orders(symbol)
+                logger.error(
+                    "Cancel timeout %s: %s order(s) still open after %.1fs",
+                    symbol, len(remaining), timeout_sec,
+                )
+            return len(orders)
+        if wait_sec > 0:
             time_mod.sleep(wait_sec)
         return len(orders)
+
+    def cancel_and_wait_clear(self, symbol: str, timeout_sec: float = 5.0) -> bool:
+        """Cancel all open orders for symbol and poll until clear. Returns True if clear."""
+        self.cancel_orders_for_symbol(
+            symbol, wait_sec=0, until_clear=True, timeout_sec=timeout_sec,
+        )
+        return not self.get_open_orders(symbol.upper())
 
     def wait_for_flat(self, symbol: str, timeout_sec: float = 30.0) -> bool:
         """Wait until no position remains for symbol."""
@@ -310,30 +362,65 @@ class AlpacaClient:
             time_mod.sleep(1.0)
         return not any(p["symbol"] == symbol for p in self.get_positions())
 
+    def get_position_qty(self, symbol: str) -> float:
+        """Live remaining qty for symbol (0 if flat)."""
+        symbol = symbol.upper()
+        for p in self.get_positions():
+            if p["symbol"] == symbol:
+                return float(p["qty"])
+        return 0.0
+
     def close_position(self, symbol: str) -> dict[str, Any]:
-        """Close entire position — cancel stale orders first, one sell only."""
+        """Close entire position — idempotent: reuse open SELL, cancel-poll, then one sell.
+
+        Never assumes cancel succeeded. Re-reads live qty after cancels/partial fills.
+        """
         self._ensure_clients()
         symbol = symbol.upper()
-        existing_sells = [
-            o for o in self.get_open_orders(symbol)
-            if "SELL" in str(o.get("side", "")).upper()
-        ]
+
+        existing_sells = self.get_open_sell_orders(symbol)
         if existing_sells:
+            logger.info(
+                "close_position %s: reusing open SELL %s status=%s",
+                symbol, existing_sells[0].get("id"), existing_sells[0].get("status"),
+            )
             return existing_sells[0]
-        self.cancel_orders_for_symbol(symbol, wait_sec=2.0)
+
+        live_qty = self.get_position_qty(symbol)
+        if live_qty <= 0:
+            return {"id": None, "status": "no_position", "symbol": symbol, "qty": 0.0}
+
+        if self.get_open_orders(symbol):
+            cleared = self.cancel_and_wait_clear(symbol, timeout_sec=5.0)
+            # Re-check for a SELL that may still be open after partial cancel
+            existing_sells = self.get_open_sell_orders(symbol)
+            if existing_sells:
+                return existing_sells[0]
+            if not cleared:
+                raise RuntimeError(
+                    f"Cannot close {symbol}: open orders remain after cancel timeout"
+                )
+
+        live_qty = self.get_position_qty(symbol)
+        if live_qty <= 0:
+            return {"id": None, "status": "no_position", "symbol": symbol, "qty": 0.0}
+
         order = self._trading.close_position(symbol)
         return self._order_dict(order)
 
     def close_all_positions(self) -> list[dict[str, Any]]:
-        """Flatten book — one symbol at a time, wait for each to fill."""
-        self.cancel_all_orders()
-        time_mod.sleep(2.0)
+        """Flatten book — one symbol at a time; safe to call repeatedly."""
         closed: list[dict[str, Any]] = []
         for pos in list(self.get_positions()):
             sym = pos["symbol"]
             try:
                 order = self.close_position(sym)
-                self.wait_for_flat(sym, timeout_sec=45.0)
+                status = str(order.get("status", "")).lower()
+                if status == "no_position":
+                    continue
+                # Wait for flat only when we have an order in flight or just submitted
+                if order.get("id"):
+                    self.wait_for_flat(sym, timeout_sec=45.0)
                 closed.append({"symbol": sym, "qty": pos["qty"], "order": order})
             except Exception as exc:
                 logger.error("close_position failed %s: %s", sym, exc)
@@ -373,10 +460,12 @@ class AlpacaClient:
     @staticmethod
     def _order_dict(order: Any) -> dict[str, Any]:
         status = AlpacaClient._normalize_status(order.status)
+        filled_qty = getattr(order, "filled_qty", None)
         return {
             "id": str(order.id),
             "symbol": order.symbol,
             "qty": float(order.qty) if order.qty else 0.0,
+            "filled_qty": float(filled_qty) if filled_qty is not None else 0.0,
             "side": str(order.side).replace("OrderSide.", ""),
             "type": str(order.type).replace("OrderType.", ""),
             "status": status,
