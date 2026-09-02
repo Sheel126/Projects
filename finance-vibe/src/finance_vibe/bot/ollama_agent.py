@@ -74,7 +74,8 @@ EXAMPLE (illustrative):
 
 SYSTEM_PROMPT_DAILY_ACTIVE = """You are a daily-active trading engine. Output ONLY valid JSON. No markdown.
 
-GOAL: Fewer, larger wins — buy strong dips on volatile names, sell when up ~TARGET%. No overnight holds.
+GOAL: Buy QUALITY Finance-Vibe setups (structure/cobra/vibe/RS), not free-falling dips.
+Mild pullbacks OR constructive green with volume are OK. Target ~TARGET% wins. Flat by EOD.
 
 STRICT ALGORITHM (follow in order):
 
@@ -89,23 +90,26 @@ SELL 100% if ANY:
   (d) position_pnl_pct <= -{sl} (cut loss)
 Otherwise HOLD position.
 
-STEP 3 — BUY DIPS (only if not halted and entries_blocked=false)
+STEP 3 — BUY QUALITY (only if not halted and entries_blocked=false)
 Max open positions: {max_pos}. Max {max_buys} new BUYs this cycle.
 Skip if: in_position, has_open_buy_order=true, or positions full.
 
-BUY-ELIGIBLE if ANY:
-  (1) change_from_open_pct <= {dip}
-  (2) active_score >= {min_score}
-  (3) setup_type is SETUP_LONG
-  (4) ibs <= {ibs} (oversold in daily range)
-  (5) price_vs_vwap_pct <= {vwap} (below VWAP)
-  (6) orb_signal is ORB_BREAKOUT_UP
+BUY-ELIGIBLE only if ALL true:
+  (1) QUALITY: setup_type is SETUP_LONG or PENDING_* OR coiled_cobra_grade has A/B
+      OR (vibe_score >= {min_vibe} AND conviction >= {min_conv})
+  (2) NOT FREEFALL: change_from_open_pct > {max_dip} (unless SETUP_LONG or cobra A)
+  (3) TIMING: either
+      (a) mild pullback into quality (open% between {max_dip} and +0.35), OR
+      (b) constructive strength (open% 0 to +2.2, rvol>={min_rvol}, above/near VWAP or ORB_BREAKOUT_UP)
+  (4) active_score >= {min_score}
+  (5) stop/tight_stop is a number below price
 
-Prefer HIGHEST active_score. Spread across sectors.
-- pct={pos_pct} default; pct={pos_mid} if active_score 35-49; pct={pos_hi} if active_score >= 50
-- stop MUST use tight_stop from watchlist. Never invent.
+Prefer HIGHEST active_score then rs_63d. Spread across sectors.
+NEVER buy just because a stock is red. NEVER buy IBS/VWAP oversold alone without quality.
+- pct={pos_pct} default; pct={pos_mid} if active_score 55-69; pct={pos_hi} if active_score >= 70
+- stop MUST use stop or tight_stop from watchlist. Never invent.
 
-STEP 4 — Prefer quality over activity. HOLD is OK when no strong dip.
+STEP 4 — Prefer quality over activity. HOLD is OK when no setup.
 
 STEP 5 — ELSE HOLD
 
@@ -125,13 +129,14 @@ def get_system_prompt() -> str:
             sl=config.QUICK_STOP_LOSS_PCT,
             max_pos=config.MAX_POSITIONS,
             max_buys=config.ACTIVE_MAX_BUYS_PER_CYCLE,
-            dip=config.DIP_BUY_FROM_OPEN_PCT,
+            max_dip=config.MAX_DIP_BUY_PCT,
             min_score=config.ACTIVE_MIN_BUY_SCORE,
-            ibs=config.IBS_OVERSOLD,
-            vwap=config.VWAP_BUY_BELOW_PCT,
+            min_vibe=int(config.MIN_BUY_VIBE),
+            min_conv=int(config.MIN_BUY_CONVICTION),
+            min_rvol=config.MIN_RVOL,
             pos_pct=pos,
             pos_mid=round(pos * 1.15, 1),
-            pos_hi=round(min(pos * 1.4, config.MAX_POSITION_PCT * 100), 1),
+            pos_hi=round(min(pos * 1.35, config.MAX_POSITION_PCT * 100), 1),
         )
     return SYSTEM_PROMPT
 
@@ -148,12 +153,14 @@ def build_decision_brief(ctx: CycleContext) -> str:
         "",
     ]
     if ctx.trading_mode == "daily_active":
-        lines.append("ACTIVE SCORE RANKING (buy red / high score first):")
+        lines.append("QUALITY SCORE RANKING (setup/cobra/vibe/RS — not knife dips):")
         ranked = sorted(ctx.watchlist, key=lambda t: t.active_score, reverse=True)
         for i, r in enumerate(ranked[:10], 1):
             lines.append(
-                f"  #{i} {r.ticker} [{r.sector}]: active={r.active_score} "
-                f"chg_open={r.change_from_open_pct}% rsi={r.rsi} tight_stop={r.tight_stop} held={r.in_position}"
+                f"  #{i} {r.ticker} [{r.sector}]: quality={r.active_score} conv={r.conviction} "
+                f"setup={r.setup_type} vibe={r.vibe_score} cobra={r.coiled_cobra_grade} "
+                f"rs={r.rs_63d} rvol={r.rvol} open={r.change_from_open_pct}% "
+                f"vwap%={r.price_vs_vwap_pct} held={r.in_position}"
             )
     else:
         lines.append("CONVICTION RANKING (trade top names first):")
@@ -167,8 +174,9 @@ def build_decision_brief(ctx: CycleContext) -> str:
     for t in ctx.watchlist:
         lines.append(
             f"  {t.ticker} [{t.sector}]: price={t.price} chg%={t.change_pct} open%={t.change_from_open_pct} "
-            f"rsi={t.rsi} active={t.active_score} conviction={t.conviction} setup={t.setup_type} "
-            f"vibe={t.vibe_score} cobra={t.coiled_cobra_grade} tight_stop={t.tight_stop} "
+            f"rsi={t.rsi} quality={t.active_score} conviction={t.conviction} setup={t.setup_type} "
+            f"vibe={t.vibe_score} cobra={t.coiled_cobra_grade} rs={t.rs_63d} rvol={t.rvol} "
+            f"vwap%={t.price_vs_vwap_pct} tight_stop={t.tight_stop} "
             f"stop={t.stop} t1={t.target1} in_pos={t.in_position} pnl%={t.position_pnl_pct} "
             f"open_buy_ord={t.has_open_buy_order}"
         )

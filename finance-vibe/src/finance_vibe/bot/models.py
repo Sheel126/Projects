@@ -70,6 +70,7 @@ class TickerSnapshot:
     orb_signal: str | None = None
     day_high: float | None = None
     day_low: float | None = None
+    rvol: float | None = None  # today's vol / 20d avg volume
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -114,6 +115,7 @@ class TickerSnapshot:
             "orb_signal": self.orb_signal,
             "day_high": self.day_high,
             "day_low": self.day_low,
+            "rvol": self.rvol,
         }
 
 

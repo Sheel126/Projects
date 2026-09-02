@@ -167,21 +167,66 @@ class TestOllamaAgent:
         buy = [a for a in decision.actions if a.ticker == "PLTR"][0]
         assert buy.normalized_action() == "BUY"
 
-    def test_daily_active_dip_buy(self, monkeypatch):
+    def test_daily_active_quality_buy(self, monkeypatch):
         monkeypatch.setattr("finance_vibe.bot.ollama_agent.config.TRADING_MODE", "daily_active")
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.BUY_MODE", "quality")
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.REQUIRE_STRUCTURE", True)
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.ACTIVE_MIN_BUY_SCORE", 40)
         agent = OllamaAgent(enabled=False)
-        snap = _snapshot("PLTR", price=25.0, stop=24.0)
+        snap = _snapshot("PLTR", price=25.0, stop=24.0, setup="SETUP_LONG")
         snap.change_from_open_pct = -0.8
         snap.rsi = 42.0
         snap.atr = 0.5
         snap.tight_stop = 24.5
-        snap.active_score = 35.0
+        snap.active_score = 55.0
+        snap.conviction = 50.0
+        snap.vibe_score = 6
+        snap.rs_63d = 0.05
+        snap.rvol = 1.2
         snap.sector = "tech"
         ctx = _ctx(watchlist=[snap])
         decision = agent.decide(ctx)
         buy = [a for a in decision.actions if a.ticker == "PLTR"][0]
         assert buy.normalized_action() == "BUY"
         assert buy.stop is not None
+
+    def test_quality_rejects_freefall_without_structure(self, monkeypatch):
+        from finance_vibe.bot.daily_activity import _buy_eligible
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.BUY_MODE", "quality")
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.REQUIRE_STRUCTURE", True)
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.MAX_DIP_BUY_PCT", -3.0)
+        snap = _snapshot("SMCI", price=50.0, stop=48.0)
+        snap.change_from_open_pct = -4.5
+        snap.setup_type = None
+        snap.conviction = 20
+        snap.vibe_score = 2
+        snap.active_score = 60
+        snap.rvol = 2.0
+        assert not _buy_eligible(snap, _ctx(watchlist=[snap]), 0)
+
+    def test_quality_allows_strength_with_structure(self, monkeypatch):
+        from finance_vibe.bot.daily_activity import _buy_eligible, compute_active_score
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.BUY_MODE", "quality")
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.REQUIRE_STRUCTURE", True)
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.ALLOW_STRENGTH_BUYS", True)
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.ACTIVE_MIN_BUY_SCORE", 40)
+        snap = _snapshot("NVDA", price=100.0, stop=95.0, setup="SETUP_LONG")
+        snap.change_from_open_pct = 0.8
+        snap.price_vs_vwap_pct = 0.2
+        snap.rvol = 1.4
+        snap.vibe_score = 7
+        snap.conviction = 55
+        snap.rs_63d = 0.04
+        snap.rsi = 52
+        snap.active_score = compute_active_score(snap)
+        assert snap.active_score >= 40
+        assert _buy_eligible(snap, _ctx(watchlist=[snap]), 0)
+
+    def test_compute_relative_volume(self):
+        import pandas as pd
+        from finance_vibe.bot.signal_engine import compute_relative_volume
+        df = __import__("pandas").DataFrame({"Volume": [100] * 20 + [250]})
+        assert compute_relative_volume(df) == 2.5
 
     def test_daily_quick_sell(self, monkeypatch):
         from finance_vibe.bot.daily_activity import should_quick_sell
@@ -197,12 +242,18 @@ class TestOllamaAgent:
         from finance_vibe.bot.daily_activity import enforce_minimum_activity
         from finance_vibe.bot.models import AgentDecision
         monkeypatch.setattr("finance_vibe.bot.daily_activity.config.REQUIRE_DAILY_ACTIVITY", True)
-        snap = _snapshot("SOFI", price=10.0, stop=9.5)
-        snap.change_from_open_pct = -1.2
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.BUY_MODE", "quality")
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.ACTIVE_MIN_BUY_SCORE", 40)
+        snap = _snapshot("SOFI", price=10.0, stop=9.5, setup="SETUP_LONG")
+        snap.change_from_open_pct = -0.8
         snap.rsi = 40.0
         snap.atr = 0.2
         snap.tight_stop = 9.85
-        snap.active_score = 40.0
+        snap.active_score = 55.0
+        snap.conviction = 50.0
+        snap.vibe_score = 6
+        snap.rs_63d = 0.03
+        snap.rvol = 1.1
         snap.sector = "fintech"
         ctx = _ctx(watchlist=[snap])
         idle = AgentDecision(actions=[TradeAction("SOFI", "HOLD")], summary="idle")

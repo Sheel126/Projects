@@ -1,4 +1,4 @@
-"""Clean session reset — cancel orders, flatten, reset day baseline."""
+"""Clean session reset / resume after outage."""
 from __future__ import annotations
 
 import logging
@@ -15,22 +15,31 @@ def prepare_clean_session(
     alpaca: AlpacaClient | None = None,
     store: BotStore | None = None,
     flatten: bool = True,
+    reset_day_baseline: bool | None = None,
 ) -> dict:
-    """Option A: flat book, no open orders, Day P&L baseline reset to now."""
+    """Cancel orders; optionally flatten; optionally reset Day P&L baseline.
+
+    flatten=True (default morning start): flat book + new day baseline.
+    flatten=False (resume after outage): keep positions + keep day_start_equity.
+    """
     alpaca = alpaca or AlpacaClient()
     store = store or BotStore()
     today = now_et().date()
+    if reset_day_baseline is None:
+        reset_day_baseline = flatten
 
     if not alpaca.configured:
         raise RuntimeError("Alpaca not configured")
 
     report: dict = {
         "status": "completed",
+        "mode": "flatten" if flatten else "resume",
         "date": today.isoformat(),
         "orders_cancelled": 0,
         "positions_closed": [],
         "equity_before": 0.0,
         "equity_after": 0.0,
+        "day_start_equity": None,
     }
 
     acct = alpaca.get_account()
@@ -41,6 +50,8 @@ def prepare_clean_session(
         alpaca.cancel_all_orders()
         report["orders_cancelled"] = len(open_before)
         logger.info("Cancelled %s open orders", len(open_before))
+        if open_before:
+            time.sleep(1.5)
     except Exception as exc:
         logger.warning("Cancel orders: %s", exc)
 
@@ -79,15 +90,36 @@ def prepare_clean_session(
     equity = acct["equity"]
     report["equity_after"] = equity
 
-    store.set_day_start_equity(today, equity)
+    if reset_day_baseline:
+        store.set_day_start_equity(today, equity)
+        report["day_start_equity"] = equity
+    else:
+        existing = store.get_day_start_equity(today)
+        if existing is None:
+            store.set_day_start_equity(today, equity)
+            report["day_start_equity"] = equity
+        else:
+            report["day_start_equity"] = existing
+
     store.set_state(f"entries_blocked_{today.isoformat()}", "0")
     store.set_halted_today(today, False)
     store.clear_all_pending_sells()
     store.log_activity(
-        f"Clean session prepared | equity=${equity:,.2f} | "
+        f"Session {report['mode']} | equity=${equity:,.2f} | "
         f"cancelled {report['orders_cancelled']} orders | "
-        f"closed {len(report['positions_closed'])} positions",
+        f"closed {len(report['positions_closed'])} positions | "
+        f"day_start=${report['day_start_equity']:,.2f}",
         phase="prepare",
     )
 
     return report
+
+
+def resume_session(
+    alpaca: AlpacaClient | None = None,
+    store: BotStore | None = None,
+) -> dict:
+    """After crash/outage: cancel stuck orders, keep positions and day P&L."""
+    return prepare_clean_session(
+        alpaca=alpaca, store=store, flatten=False, reset_day_baseline=False,
+    )

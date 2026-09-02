@@ -474,11 +474,16 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Finance-Vibe paper trading bot")
     parser.add_argument(
         "command",
-        choices=["cycle", "daemon", "eod", "status", "prepare-session"],
+        choices=["cycle", "daemon", "eod", "status", "prepare-session", "resume-session"],
         help="cycle=one run, daemon=scheduled, eod=end-of-day report, "
-        "status=account info, prepare-session=cancel/flatten/reset day baseline",
+        "status=account info, prepare-session=cancel/flatten/reset day baseline, "
+        "resume-session=after outage (keep positions + day P&L)",
     )
     parser.add_argument("--force", action="store_true", help="Run cycle even if market closed")
+    parser.add_argument(
+        "--no-flatten", action="store_true",
+        help="With prepare-session: cancel orders only, keep positions",
+    )
     args = parser.parse_args(argv)
 
     runner = TradingRunner()
@@ -503,7 +508,17 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "prepare-session":
-        result = prepare_clean_session(alpaca=runner.alpaca, store=runner.store)
+        result = prepare_clean_session(
+            alpaca=runner.alpaca,
+            store=runner.store,
+            flatten=not args.no_flatten,
+        )
+        print(json.dumps(result, indent=2))
+        return 0
+
+    if args.command == "resume-session":
+        from finance_vibe.bot.session import resume_session
+        result = resume_session(alpaca=runner.alpaca, store=runner.store)
         print(json.dumps(result, indent=2))
         return 0
 

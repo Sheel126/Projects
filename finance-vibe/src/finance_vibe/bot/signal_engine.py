@@ -9,6 +9,7 @@ import pandas as pd
 from finance_vibe.analysis_engine import (
     build_features,
     market_regime_ok,
+    relative_strength,
     score_last_row,
     sentiment_action,
 )
@@ -47,8 +48,12 @@ def compute_conviction(snap: TickerSnapshot) -> float:
         score += max(0, 21 - snap.ml_rank * 4)
     if snap.regime_ok:
         score += 10.0
+    if snap.rs_63d is not None and snap.rs_63d > 0:
+        score += min(12.0, snap.rs_63d * 60.0)
     if snap.vs_qqq_pct is not None and snap.vs_qqq_pct > 0:
         score += 5.0
+    if snap.rvol is not None and snap.rvol >= 1.2:
+        score += 6.0
     if snap.in_position:
         if snap.position_pnl_pct is not None and snap.position_pnl_pct >= 3:
             score -= 12.0
@@ -57,6 +62,18 @@ def compute_conviction(snap: TickerSnapshot) -> float:
     if snap.rsi is not None and snap.rsi > 72:
         score -= 10.0
     return round(max(0.0, min(100.0, score)), 1)
+
+
+def compute_relative_volume(df: pd.DataFrame, lookback: int = 20) -> float | None:
+    """Today's volume / average of prior N sessions."""
+    if df is None or df.empty or "Volume" not in df.columns or len(df) < lookback + 1:
+        return None
+    vols = df["Volume"].astype(float)
+    today = float(vols.iloc[-1])
+    avg = float(vols.iloc[-(lookback + 1):-1].mean())
+    if avg <= 0:
+        return None
+    return round(today / avg, 3)
 
 
 class SignalEngine:
@@ -168,6 +185,19 @@ class SignalEngine:
             snap.active_score = compute_active_score(snap)
             snap.tight_stop = compute_tight_stop(snap)
             return snap
+
+        snap.rvol = compute_relative_volume(df)
+
+        # Always attach RS vs QQQ when possible (even without confirmed setup)
+        if bench is not None and not bench.empty:
+            try:
+                ok_rs, rel = relative_strength(df, bench)
+                if rel is not None:
+                    snap.rs_63d = rel
+                if snap.regime_ok is None:
+                    snap.regime_ok = market_regime_ok(bench, bench.iloc[-1].get("Date"))
+            except Exception as exc:
+                logger.debug("RS %s: %s", ticker, exc)
 
         # --- Macro Vibe Score (analysis_engine) ---
         try:

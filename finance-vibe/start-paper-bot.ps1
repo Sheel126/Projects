@@ -5,7 +5,8 @@ param(
     [switch]$SkipCheck,
     [switch]$NoRunner,
     [switch]$NoBrowser,
-    [switch]$SkipPrepare
+    [switch]$SkipPrepare,
+    [switch]$Resume
 )
 
 $ErrorActionPreference = "Continue"
@@ -73,11 +74,20 @@ Start-BotWindow -Title "FV Bot - Dashboard" -Script $Dashboard
 Start-Sleep -Seconds 2
 
 if (-not $NoRunner) {
-    if (-not $SkipPrepare) {
+    if ($Resume) {
+        Write-Host "RESUME mode — cancel stuck orders, KEEP positions + day P&L..." -ForegroundColor Yellow
+        & $Python $Runner resume-session
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "resume-session failed." -ForegroundColor Red
+            exit 1
+        }
+        Write-Host ""
+    }
+    elseif (-not $SkipPrepare) {
         Write-Host "Preparing clean session (cancel orders, flatten, reset day P&L)..." -ForegroundColor Yellow
         & $Python $Runner prepare-session
         if ($LASTEXITCODE -ne 0) {
-            Write-Host "prepare-session failed. Fix errors or use -SkipPrepare" -ForegroundColor Red
+            Write-Host "prepare-session failed. Fix errors or use -SkipPrepare / -Resume" -ForegroundColor Red
             exit 1
         }
         Write-Host ""
