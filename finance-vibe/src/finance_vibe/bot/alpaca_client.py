@@ -208,15 +208,41 @@ class AlpacaClient:
             return df
         return df.sort_values("Date").reset_index(drop=True)
 
+    def submit_stop_order(
+        self, symbol: str, qty: float, stop_price: float
+    ) -> dict[str, Any]:
+        """Protective stop — whole shares + DAY (Alpaca rejects fractional GTC stops)."""
+        self._ensure_clients()
+        from alpaca.trading.requests import StopOrderRequest
+        from alpaca.trading.enums import OrderSide, TimeInForce
+
+        whole_qty = max(1, int(qty))
+        req = StopOrderRequest(
+            symbol=symbol.upper(),
+            qty=whole_qty,
+            side=OrderSide.SELL,
+            time_in_force=TimeInForce.DAY,
+            stop_price=round(stop_price, 2),
+        )
+        order = self._trading.submit_order(req)
+        return self._order_dict(order)
+
     def submit_market_order(self, symbol: str, qty: float, side: str) -> dict[str, Any]:
         self._ensure_clients()
         from alpaca.trading.requests import MarketOrderRequest
         from alpaca.trading.enums import OrderSide, TimeInForce
 
         order_side = OrderSide.BUY if side.upper() == "BUY" else OrderSide.SELL
+        # Buys: prefer whole shares; sells: allow fractional to fully exit
+        if side.upper() == "BUY":
+            order_qty = max(1, int(qty))
+        else:
+            order_qty = round(qty, 4)
+            if order_qty == int(order_qty):
+                order_qty = int(order_qty)
         req = MarketOrderRequest(
             symbol=symbol.upper(),
-            qty=round(qty, 4),
+            qty=order_qty,
             side=order_side,
             time_in_force=TimeInForce.DAY,
         )
@@ -231,29 +257,18 @@ class AlpacaClient:
         from alpaca.trading.enums import OrderSide, TimeInForce
 
         order_side = OrderSide.BUY if side.upper() == "BUY" else OrderSide.SELL
+        if side.upper() == "BUY":
+            order_qty = max(1, int(qty))
+        else:
+            order_qty = round(qty, 4)
+            if order_qty == int(order_qty):
+                order_qty = int(order_qty)
         req = LimitOrderRequest(
             symbol=symbol.upper(),
-            qty=round(qty, 4),
+            qty=order_qty,
             side=order_side,
             time_in_force=TimeInForce.DAY,
             limit_price=round(limit_price, 2),
-        )
-        order = self._trading.submit_order(req)
-        return self._order_dict(order)
-
-    def submit_stop_order(
-        self, symbol: str, qty: float, stop_price: float
-    ) -> dict[str, Any]:
-        self._ensure_clients()
-        from alpaca.trading.requests import StopOrderRequest
-        from alpaca.trading.enums import OrderSide, TimeInForce
-
-        req = StopOrderRequest(
-            symbol=symbol.upper(),
-            qty=round(qty, 4),
-            side=OrderSide.SELL,
-            time_in_force=TimeInForce.GTC,
-            stop_price=round(stop_price, 2),
         )
         order = self._trading.submit_order(req)
         return self._order_dict(order)
@@ -270,19 +285,65 @@ class AlpacaClient:
             out = [o for o in out if o["symbol"] == symbol.upper()]
         return out
 
+    def cancel_orders_for_symbol(self, symbol: str) -> int:
+        """Cancel all open orders for one symbol (frees shares for market sell)."""
+        self._ensure_clients()
+        symbol = symbol.upper()
+        orders = self.get_open_orders(symbol)
+        for o in orders:
+            try:
+                self._trading.cancel_order_by_id(o["id"])
+            except Exception as exc:
+                logger.warning("Cancel order %s %s: %s", symbol, o.get("id"), exc)
+        return len(orders)
+
+    def flatten_all_positions(self) -> list[dict[str, Any]]:
+        """Market-sell every open position."""
+        closed: list[dict[str, Any]] = []
+        for pos in self.get_positions():
+            sym = pos["symbol"]
+            qty = float(pos["qty"])
+            self.cancel_orders_for_symbol(sym)
+            order = self.submit_market_order(sym, qty, "SELL")
+            closed.append({"symbol": sym, "qty": qty, "order": order})
+        return closed
+
     def cancel_all_orders(self) -> None:
         self._ensure_clients()
         self._trading.cancel_orders()
 
+    def cancel_open_buy_orders(self) -> int:
+        """Cancel all open BUY orders (late session / cleanup)."""
+        cancelled = 0
+        for o in self.get_open_orders():
+            if "BUY" in str(o.get("side", "")).upper():
+                try:
+                    self._trading.cancel_order_by_id(o["id"])
+                    cancelled += 1
+                except Exception as exc:
+                    logger.warning("Cancel buy order %s: %s", o.get("id"), exc)
+        return cancelled
+
+    def get_order(self, order_id: str) -> dict[str, Any]:
+        self._ensure_clients()
+        order = self._trading.get_order_by_id(order_id)
+        return self._order_dict(order)
+
+    @staticmethod
+    def _normalize_status(status: Any) -> str:
+        s = str(status)
+        return s.replace("OrderStatus.", "").lower()
+
     @staticmethod
     def _order_dict(order: Any) -> dict[str, Any]:
+        status = AlpacaClient._normalize_status(order.status)
         return {
             "id": str(order.id),
             "symbol": order.symbol,
             "qty": float(order.qty) if order.qty else 0.0,
-            "side": str(order.side),
-            "type": str(order.type),
-            "status": str(order.status),
+            "side": str(order.side).replace("OrderSide.", ""),
+            "type": str(order.type).replace("OrderType.", ""),
+            "status": status,
             "filled_avg_price": float(order.filled_avg_price or 0),
             "limit_price": float(order.limit_price or 0) if order.limit_price else None,
             "stop_price": float(order.stop_price or 0) if order.stop_price else None,

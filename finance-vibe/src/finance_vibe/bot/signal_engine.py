@@ -301,6 +301,7 @@ class SignalEngine:
         return {
             "benchmark": self.benchmark,
             "change_pct": benchmark_price.get("change_pct"),
+            "change_from_open_pct": benchmark_price.get("change_from_open_pct"),
             "regime_bull_ok": regime_ok,
             "interpretation": (
                 "BULL: QQQ above rising EMA50/100 — favor longs"

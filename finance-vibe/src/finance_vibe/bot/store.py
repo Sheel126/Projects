@@ -208,6 +208,50 @@ class BotStore:
             )
             return int(cur.lastrowid)
 
+    def update_order_status(
+        self,
+        order_id: int,
+        status: str,
+        filled_avg_price: float | None = None,
+        alpaca_order_id: str | None = None,
+    ) -> None:
+        with self._conn() as conn:
+            if alpaca_order_id is not None:
+                conn.execute(
+                    "UPDATE orders SET status = ?, filled_avg_price = ?, "
+                    "alpaca_order_id = ? WHERE id = ?",
+                    (status, filled_avg_price, alpaca_order_id, order_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE orders SET status = ?, filled_avg_price = ? WHERE id = ?",
+                    (status, filled_avg_price, order_id),
+                )
+
+    def get_pending_sell_symbols(self) -> list[str]:
+        import json
+        raw = self.get_state("pending_sell_symbols", "[]")
+        try:
+            return list(json.loads(raw or "[]"))
+        except json.JSONDecodeError:
+            return []
+
+    def add_pending_sell(self, symbol: str) -> None:
+        import json
+        syms = self.get_pending_sell_symbols()
+        sym = symbol.upper()
+        if sym not in syms:
+            syms.append(sym)
+            self.set_state("pending_sell_symbols", json.dumps(syms))
+
+    def clear_pending_sell(self, symbol: str) -> None:
+        import json
+        syms = [s for s in self.get_pending_sell_symbols() if s != symbol.upper()]
+        self.set_state("pending_sell_symbols", json.dumps(syms))
+
+    def clear_all_pending_sells(self) -> None:
+        self.set_state("pending_sell_symbols", "[]")
+
     def save_equity_snapshot(
         self,
         equity: float,

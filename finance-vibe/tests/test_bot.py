@@ -42,14 +42,26 @@ def _ctx(equity: float = 100_000, halted: bool = False, watchlist=None):
 
 
 class TestRiskGuard:
-    def test_buy_approved_with_stop(self):
+    def test_buy_approved_with_stop(self, monkeypatch):
+        monkeypatch.setattr("finance_vibe.bot.risk_guard.is_market_open", lambda: True)
+        monkeypatch.setattr("finance_vibe.bot.risk_guard.is_late_entry_window", lambda: False)
         guard = RiskGuard(risk_per_trade_pct=0.03, min_notional=50)
         snap = _snapshot("PLTR", setup="SETUP_LONG", stop=95.0)
         action = TradeAction("PLTR", "BUY", pct=20, stop=95.0, reason="setup")
         risk = guard.validate(action, _ctx(), snap, open_position_count=0)
         assert risk.approved
-        assert risk.qty > 0
+        assert risk.qty >= 1
+        assert risk.qty == int(risk.qty)  # whole shares
         assert risk.notional >= 50
+
+    def test_buy_blocked_when_entries_blocked(self):
+        guard = RiskGuard()
+        snap = _snapshot("PLTR", setup="SETUP_LONG")
+        ctx = _ctx()
+        ctx.entries_blocked = True
+        action = TradeAction("PLTR", "BUY", pct=20, stop=95.0)
+        risk = guard.validate(action, ctx, snap, 0)
+        assert not risk.approved
 
     def test_buy_rejected_without_stop(self):
         guard = RiskGuard()
@@ -76,6 +88,70 @@ class TestRiskGuard:
         halted, pnl = guard.check_daily_halt(100_000, 94_000)
         assert halted
         assert pnl < 0
+
+    def test_buy_blocked_when_qqq_red(self, monkeypatch):
+        guard = RiskGuard()
+        snap = _snapshot("PLTR", setup="SETUP_LONG")
+        ctx = _ctx()
+        ctx.benchmark_change_from_open_pct = -0.55
+        ctx.entries_blocked = False
+        action = TradeAction("PLTR", "BUY", pct=13, stop=95.0)
+        monkeypatch.setattr(
+            "finance_vibe.bot.risk_guard.is_market_open", lambda: True,
+        )
+        risk = guard.validate(action, ctx, snap, 0)
+        assert not risk.approved
+        assert "dip buys blocked" in risk.notes
+
+    def test_buy_blocked_premarket(self, monkeypatch):
+        guard = RiskGuard()
+        snap = _snapshot("PLTR", setup="SETUP_LONG")
+        ctx = _ctx()
+        action = TradeAction("PLTR", "BUY", pct=13, stop=95.0)
+        monkeypatch.setattr(
+            "finance_vibe.bot.risk_guard.is_market_open", lambda: False,
+        )
+        risk = guard.validate(action, ctx, snap, 0)
+        assert not risk.approved
+        assert "Market not open" in risk.notes
+
+    def test_buy_blocked_late_session(self, monkeypatch):
+        guard = RiskGuard()
+        snap = _snapshot("PLTR", setup="SETUP_LONG")
+        ctx = _ctx()
+        action = TradeAction("PLTR", "BUY", pct=13, stop=95.0)
+        monkeypatch.setattr(
+            "finance_vibe.bot.risk_guard.is_market_open", lambda: True,
+        )
+        monkeypatch.setattr(
+            "finance_vibe.bot.risk_guard.is_late_entry_window", lambda: True,
+        )
+        risk = guard.validate(action, ctx, snap, 0)
+        assert not risk.approved
+        assert "3:30" in risk.notes
+
+    def test_max_five_positions(self, monkeypatch):
+        guard = RiskGuard(max_positions=5)
+        snap = _snapshot("NVDA", setup="SETUP_LONG")
+        action = TradeAction("NVDA", "BUY", pct=13, stop=95.0)
+        monkeypatch.setattr(
+            "finance_vibe.bot.risk_guard.is_market_open", lambda: True,
+        )
+        monkeypatch.setattr(
+            "finance_vibe.bot.risk_guard.is_late_entry_window", lambda: False,
+        )
+        risk = guard.validate(action, _ctx(), snap, open_position_count=5)
+        assert not risk.approved
+        assert "Max 5" in risk.notes
+
+
+class TestRegime:
+    def test_benchmark_blocks_at_threshold(self):
+        from finance_vibe.bot.regime import benchmark_blocks_new_buys
+        assert benchmark_blocks_new_buys(-0.5)
+        assert benchmark_blocks_new_buys(-0.4)
+        assert not benchmark_blocks_new_buys(-0.3)
+        assert not benchmark_blocks_new_buys(None)
 
 
 class TestOllamaAgent:
@@ -107,11 +183,12 @@ class TestOllamaAgent:
         assert buy.normalized_action() == "BUY"
         assert buy.stop is not None
 
-    def test_daily_quick_sell(self):
+    def test_daily_quick_sell(self, monkeypatch):
         from finance_vibe.bot.daily_activity import should_quick_sell
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.QUICK_PROFIT_PCT", 1.2)
         snap = _snapshot("PLTR", price=100.0)
         snap.in_position = True
-        snap.position_pnl_pct = 0.5
+        snap.position_pnl_pct = 1.5
         ok, reason, pct = should_quick_sell(snap)
         assert ok
         assert pct == 100.0
@@ -228,6 +305,155 @@ class TestHealth:
         snap.ibs = 0.15
         snap.price_vs_vwap_pct = -0.3
         assert intraday_buy_bonus(snap) >= 20
+
+    def test_next_cycle_after_close_is_next_open(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        from finance_vibe.bot.market_hours import next_cycle_time, next_weekday_open
+        et = ZoneInfo("America/New_York")
+        after = datetime(2026, 8, 31, 16, 5, tzinfo=et)
+        nxt = next_cycle_time(20, after)
+        assert nxt == next_weekday_open(after)
+        assert nxt.hour == 9 and nxt.minute == 30
+        assert nxt > after
+
+    def test_next_cycle_aligned_from_market_open(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        from finance_vibe.bot.market_hours import next_cycle_time
+        et = ZoneInfo("America/New_York")
+        at_open = datetime(2026, 9, 1, 9, 30, 27, tzinfo=et)
+        assert next_cycle_time(20, at_open) == datetime(2026, 9, 1, 9, 50, tzinfo=et)
+        mid = datetime(2026, 9, 1, 9, 45, tzinfo=et)
+        assert next_cycle_time(20, mid) == datetime(2026, 9, 1, 9, 50, tzinfo=et)
+        after_slot = datetime(2026, 9, 1, 9, 50, 1, tzinfo=et)
+        assert next_cycle_time(20, after_slot) == datetime(2026, 9, 1, 10, 10, tzinfo=et)
+
+    def test_daemon_wakeup_hits_eod_flat(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        from finance_vibe.bot.market_hours import next_daemon_wakeup, eod_flat_datetime
+        et = ZoneInfo("America/New_York")
+        at_350 = datetime(2026, 9, 2, 15, 50, tzinfo=et)
+        assert next_daemon_wakeup(20, at_350) == eod_flat_datetime(at_350.date())
+
+    def test_preemptive_eod_at_last_cycle(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        from finance_vibe.bot.market_hours import should_preemptive_eod_flatten
+        et = ZoneInfo("America/New_York")
+        at_350 = datetime(2026, 9, 2, 15, 50, tzinfo=et)
+        assert should_preemptive_eod_flatten(at_350, 20)
+        at_330 = datetime(2026, 9, 2, 15, 30, tzinfo=et)
+        assert not should_preemptive_eod_flatten(at_330, 20)
+
+    def test_late_entry_window(self, monkeypatch):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        from finance_vibe.bot.market_hours import is_late_entry_window
+        et = ZoneInfo("America/New_York")
+        monkeypatch.setattr(
+            "finance_vibe.bot.market_hours.now_et",
+            lambda: datetime(2026, 9, 2, 15, 35, tzinfo=et),
+        )
+        assert is_late_entry_window()
+
+    def test_executor_cancels_orders_before_sell(self, tmp_db, monkeypatch):
+        from finance_vibe.bot.executor import Executor
+        from finance_vibe.bot.models import RiskResult
+
+        cancelled: list[str] = []
+
+        class FakeAlpaca:
+            configured = True
+
+            def cancel_orders_for_symbol(self, symbol: str) -> int:
+                cancelled.append(symbol)
+                return 2
+
+            def submit_market_order(self, symbol, qty, side):
+                return {"id": "o1", "status": "submitted", "filled_avg_price": 0}
+
+            def submit_limit_order(self, *a, **k):
+                raise AssertionError("not expected")
+
+            def submit_stop_order(self, *a, **k):
+                raise AssertionError("not expected")
+
+        monkeypatch.setattr("finance_vibe.bot.executor.config.USE_BROKER_STOPS", False)
+        ex = Executor(alpaca=FakeAlpaca(), store=tmp_db, dry_run=False)
+        risk = RiskResult(
+            approved=True,
+            action=TradeAction("META", "SELL", pct=100, reason="take profit"),
+            qty=10,
+            notional=1000,
+        )
+        ex.execute(risk, cycle_id=1, decision_id=1, price=500.0)
+        assert cancelled == ["META"]
+
+    def test_executor_no_broker_stops_in_daily_active(self, monkeypatch):
+        from finance_vibe.bot.executor import Executor
+        monkeypatch.setattr("finance_vibe.bot.executor.config.TRADING_MODE", "daily_active")
+        monkeypatch.setattr("finance_vibe.bot.executor.config.USE_BROKER_STOPS", True)
+        assert not Executor._use_broker_stops()
+
+    def test_executor_retry_pending_sell(self, tmp_db, monkeypatch):
+        from finance_vibe.bot.executor import Executor
+
+        class FakeAlpaca:
+            configured = True
+
+            def cancel_orders_for_symbol(self, symbol):
+                return 0
+
+            def submit_market_order(self, symbol, qty, side):
+                return {"id": "r1", "status": "filled", "filled_avg_price": 100}
+
+        tmp_db.add_pending_sell("NVDA")
+        ex = Executor(alpaca=FakeAlpaca(), store=tmp_db, dry_run=False)
+        n = ex.retry_pending_sells(
+            [{"symbol": "NVDA", "qty": 10}], cycle_id=1,
+        )
+        assert n == 1
+        assert tmp_db.get_pending_sell_symbols() == []
+
+    def test_store_pending_sells(self, tmp_db):
+        tmp_db.add_pending_sell("AAPL")
+        tmp_db.add_pending_sell("AAPL")
+        assert tmp_db.get_pending_sell_symbols() == ["AAPL"]
+        tmp_db.clear_pending_sell("AAPL")
+        assert tmp_db.get_pending_sell_symbols() == []
+
+    def test_prepare_clean_session_resets_state(self, tmp_db, monkeypatch):
+        from datetime import date
+        from finance_vibe.bot.session import prepare_clean_session
+
+        class FakeAlpaca:
+            configured = True
+
+            def get_account(self):
+                return {"equity": 99_500.0, "cash": 50_000.0}
+
+            def cancel_all_orders(self):
+                pass
+
+            def get_open_orders(self):
+                return [{"id": "1"}, {"id": "2"}]
+
+            def get_positions(self):
+                return []
+
+        today = date(2026, 9, 1)
+        monkeypatch.setattr("finance_vibe.bot.session.now_et", lambda: __import__("datetime").datetime(
+            2026, 9, 1, 11, 0, tzinfo=__import__("zoneinfo").ZoneInfo("America/New_York"),
+        ))
+        tmp_db.set_state("entries_blocked_2026-09-01", "1")
+        tmp_db.set_halted_today(today, True)
+        report = prepare_clean_session(alpaca=FakeAlpaca(), store=tmp_db)
+        assert report["equity_after"] == 99_500.0
+        assert tmp_db.get_day_start_equity(today) == 99_500.0
+        assert tmp_db.get_state("entries_blocked_2026-09-01") == "0"
+        assert not tmp_db.is_halted_today(today)
 
     def test_activity_log(self, tmp_db):
         tmp_db.log_activity("test message", phase="cycle", cycle_id=1)

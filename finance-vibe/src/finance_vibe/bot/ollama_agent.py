@@ -74,51 +74,65 @@ EXAMPLE (illustrative):
 
 SYSTEM_PROMPT_DAILY_ACTIVE = """You are a daily-active trading engine. Output ONLY valid JSON. No markdown.
 
-GOAL: Frequent small wins — buy intraday dips, sell when green. Avoid long holds.
+GOAL: Fewer, larger wins — buy strong dips on volatile names, sell when up ~TARGET%. No overnight holds.
 
 STRICT ALGORITHM (follow in order):
 
-STEP 1 — HALTS
-If account.halted=true: SELL or HOLD only. No new BUYs.
+STEP 1 — HALTS / EOD
+If account.halted=true OR account.entries_blocked=true: SELL or HOLD only. No new BUYs.
 
 STEP 2 — SELL (every in_position=true ticker)
 SELL 100% if ANY:
-  (a) position_pnl_pct >= 0.35
-  (b) change_from_open_pct >= 1.2
-  (c) rsi >= 68
-  (d) position_pnl_pct <= -1.0 (cut loss, rotate)
+  (a) position_pnl_pct >= {tp}
+  (b) change_from_open_pct >= {sell_open}
+  (c) rsi >= {sell_rsi}
+  (d) position_pnl_pct <= -{sl} (cut loss)
 Otherwise HOLD position.
 
-STEP 3 — BUY DIPS (if not halted)
-Max open positions: 6. Max 2 new BUYs this cycle.
+STEP 3 — BUY DIPS (only if not halted and entries_blocked=false)
+Max open positions: {max_pos}. Max {max_buys} new BUYs this cycle.
 Skip if: in_position, has_open_buy_order=true, or positions full.
 
 BUY-ELIGIBLE if ANY:
-  (1) change_from_open_pct <= -0.2 (red from open — dip buy)
-  (2) active_score >= 22
+  (1) change_from_open_pct <= {dip}
+  (2) active_score >= {min_score}
   (3) setup_type is SETUP_LONG
-  (4) ibs <= 0.25 (oversold in daily range — mean reversion)
-  (5) price_vs_vwap_pct <= -0.1 (below VWAP — institutional dip)
-  (6) orb_signal is ORB_BREAKOUT_UP (morning momentum)
+  (4) ibs <= {ibs} (oversold in daily range)
+  (5) price_vs_vwap_pct <= {vwap} (below VWAP)
+  (6) orb_signal is ORB_BREAKOUT_UP
 
-Prefer HIGHEST active_score. Spread across sectors (tech, fintech, crypto, energy, finance).
-- pct=10 default; pct=12 if active_score 35-49; pct=14 if active_score >= 50
-- stop MUST use tight_stop from watchlist (or stop field). Never invent.
+Prefer HIGHEST active_score. Spread across sectors.
+- pct={pos_pct} default; pct={pos_mid} if active_score 35-49; pct={pos_hi} if active_score >= 50
+- stop MUST use tight_stop from watchlist. Never invent.
 
-STEP 4 — ACTIVITY RULE
-If cash available and no BUY/SELL yet: pick the reddest eligible ticker (most negative change_from_open_pct).
+STEP 4 — Prefer quality over activity. HOLD is OK when no strong dip.
 
 STEP 5 — ELSE HOLD
 
 OUTPUT FORMAT:
-{"summary":"max 20 words","actions":[{"ticker":"X","action":"BUY|SELL|HOLD","pct":0,"stop":null,"reason":"rule cite"}]}
+{{"summary":"max 20 words","actions":[{{"ticker":"X","action":"BUY|SELL|HOLD","pct":0,"stop":null,"reason":"rule cite"}}]}}
 
-RULES: One action per ticker. Never BUY without stop below price. When unsure on buys, still pick best dip if active_score>=22."""
+RULES: One action per ticker. Never BUY without stop below price. Never BUY when entries_blocked."""
 
 
 def get_system_prompt() -> str:
     if config.TRADING_MODE == "daily_active":
-        return SYSTEM_PROMPT_DAILY_ACTIVE
+        pos = config.ACTIVE_POSITION_PCT
+        return SYSTEM_PROMPT_DAILY_ACTIVE.format(
+            tp=config.QUICK_PROFIT_PCT,
+            sell_open=config.ACTIVE_SELL_FROM_OPEN_PCT,
+            sell_rsi=config.ACTIVE_SELL_RSI,
+            sl=config.QUICK_STOP_LOSS_PCT,
+            max_pos=config.MAX_POSITIONS,
+            max_buys=config.ACTIVE_MAX_BUYS_PER_CYCLE,
+            dip=config.DIP_BUY_FROM_OPEN_PCT,
+            min_score=config.ACTIVE_MIN_BUY_SCORE,
+            ibs=config.IBS_OVERSOLD,
+            vwap=config.VWAP_BUY_BELOW_PCT,
+            pos_pct=pos,
+            pos_mid=round(pos * 1.15, 1),
+            pos_hi=round(min(pos * 1.4, config.MAX_POSITION_PCT * 100), 1),
+        )
     return SYSTEM_PROMPT
 
 

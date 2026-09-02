@@ -128,10 +128,12 @@ class CycleContext:
     open_positions: list[dict[str, Any]]
     strategy_notes: str
     benchmark_change_pct: float | None = None
+    benchmark_change_from_open_pct: float | None = None
     open_orders: list[dict[str, Any]] = field(default_factory=list)
     market_regime: dict[str, Any] = field(default_factory=dict)
     conviction_ranking: list[dict[str, Any]] = field(default_factory=list)
     trading_mode: str = "daily_active"
+    entries_blocked: bool = False
 
     def to_prompt_dict(self) -> dict[str, Any]:
         return {
@@ -141,9 +143,11 @@ class CycleContext:
                 "buying_power": round(self.buying_power, 2),
                 "day_pnl_pct": round(self.day_pnl_pct, 3),
                 "halted": self.halted,
+                "entries_blocked": self.entries_blocked,
             },
             "market_regime": self.market_regime,
             "benchmark_change_pct": self.benchmark_change_pct,
+            "benchmark_change_from_open_pct": self.benchmark_change_from_open_pct,
             "conviction_ranking": self.conviction_ranking,
             "open_positions": self.open_positions,
             "open_orders": self.open_orders,

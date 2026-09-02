@@ -4,7 +4,8 @@
 param(
     [switch]$SkipCheck,
     [switch]$NoRunner,
-    [switch]$NoBrowser
+    [switch]$NoBrowser,
+    [switch]$SkipPrepare
 )
 
 $ErrorActionPreference = "Continue"
@@ -72,13 +73,22 @@ Start-BotWindow -Title "FV Bot - Dashboard" -Script $Dashboard
 Start-Sleep -Seconds 2
 
 if (-not $NoRunner) {
+    if (-not $SkipPrepare) {
+        Write-Host "Preparing clean session (cancel orders, flatten, reset day P&L)..." -ForegroundColor Yellow
+        & $Python $Runner prepare-session
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "prepare-session failed. Fix errors or use -SkipPrepare" -ForegroundColor Red
+            exit 1
+        }
+        Write-Host ""
+    }
     Start-BotWindow -Title "FV Bot - Runner" -Script $Runner -ScriptArgs @("daemon")
 }
 
 Write-Host "Started:" -ForegroundColor Green
 Write-Host "  [1] Dashboard  ->  http://127.0.0.1:5001"
 if (-not $NoRunner) {
-    Write-Host "  [2] Runner     ->  trades every 15 min (market hours)"
+    Write-Host "  [2] Runner     ->  trades every 20 min (market hours)"
 }
 Write-Host ""
 Write-Host "Close those windows to stop the bot." -ForegroundColor DarkGray

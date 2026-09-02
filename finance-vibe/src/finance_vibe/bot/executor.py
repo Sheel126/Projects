@@ -1,100 +1,207 @@
-"""Order execution against Alpaca."""
-from __future__ import annotations
-
-import logging
-from typing import Any
-
-from finance_vibe.bot import config
-from finance_vibe.bot.alpaca_client import AlpacaClient
-from finance_vibe.bot.models import RiskResult
-from finance_vibe.bot.store import BotStore
-
-logger = logging.getLogger(__name__)
-
-
-class Executor:
-    def __init__(
-        self,
-        alpaca: AlpacaClient | None = None,
-        store: BotStore | None = None,
-        dry_run: bool | None = None,
-    ) -> None:
-        self.alpaca = alpaca or AlpacaClient()
-        self.store = store or BotStore()
-        self.dry_run = config.DRY_RUN if dry_run is None else dry_run
-
-    def execute(
-        self,
-        risk: RiskResult,
-        cycle_id: int,
-        decision_id: int,
-        price: float,
-    ) -> dict[str, Any] | None:
-        if not risk.approved or risk.qty <= 0:
-            return None
-
-        action = risk.action.normalized_action()
-        ticker = risk.action.ticker
-
-        if self.dry_run:
-            logger.info("DRY RUN %s %s qty=%s", action, ticker, risk.qty)
-            self.store.save_order(
-                cycle_id, ticker, action, risk.qty,
-                alpaca_order_id="dry-run", status="simulated", decision_id=decision_id,
-            )
-            return {"id": "dry-run", "status": "simulated", "symbol": ticker}
-
-        try:
-            if action == "BUY":
-                order = self.alpaca.submit_limit_order(
-                    ticker, risk.qty, "BUY", limit_price=price * 1.002
-                )
-                if risk.action.stop:
-                    try:
-                        self.alpaca.submit_stop_order(ticker, risk.qty, risk.action.stop)
-                    except Exception as exc:
-                        logger.warning("Stop order failed for %s: %s", ticker, exc)
-            elif action == "SELL":
-                order = self.alpaca.submit_market_order(ticker, risk.qty, "SELL")
-            else:
-                return None
-
-            self.store.save_order(
-                cycle_id, ticker, action, risk.qty,
-                alpaca_order_id=order.get("id"),
-                status=order.get("status", "submitted"),
-                decision_id=decision_id,
-                filled_avg_price=order.get("filled_avg_price"),
-            )
-            return order
-        except Exception as exc:
-            logger.error("Order failed %s %s: %s", action, ticker, exc)
-            self.store.save_order(
-                cycle_id, ticker, action, risk.qty,
-                alpaca_order_id=None, status=f"error:{exc}", decision_id=decision_id,
-            )
-            return None
-
-    def ensure_stops(self, positions: list[dict[str, Any]], snapshots: dict[str, Any]) -> None:
-        """Place protective stops if missing (best-effort)."""
-        if self.dry_run:
-            return
-        for pos in positions:
-            sym = pos["symbol"]
-            open_stops = [
-                o for o in self.alpaca.get_open_orders(sym)
-                if "stop" in str(o.get("type", "")).lower()
-            ]
-            if open_stops:
-                continue
-            snap = snapshots.get(sym)
-            stop_px = None
-            if snap:
-                stop_px = getattr(snap, "tight_stop", None) or getattr(snap, "stop", None)
-            if not stop_px:
-                continue
-            try:
-                self.alpaca.submit_stop_order(sym, float(pos["qty"]), stop_px)
-                logger.info("Placed missing stop for %s @ %s", sym, stop_px)
-            except Exception as exc:
-                logger.warning("Could not place stop for %s: %s", sym, exc)
+"""Order execution against Alpaca."""
+from __future__ import annotations
+
+import logging
+import time
+from typing import Any
+
+from finance_vibe.bot import config
+from finance_vibe.bot.alpaca_client import AlpacaClient
+from finance_vibe.bot.models import RiskResult
+from finance_vibe.bot.store import BotStore
+
+logger = logging.getLogger(__name__)
+
+
+class Executor:
+    def __init__(
+        self,
+        alpaca: AlpacaClient | None = None,
+        store: BotStore | None = None,
+        dry_run: bool | None = None,
+    ) -> None:
+        self.alpaca = alpaca or AlpacaClient()
+        self.store = store or BotStore()
+        self.dry_run = config.DRY_RUN if dry_run is None else dry_run
+
+    @staticmethod
+    def _use_broker_stops() -> bool:
+        """Broker stops lock shares and block market sells — never in daily_active."""
+        if config.TRADING_MODE == "daily_active":
+            return False
+        return config.USE_BROKER_STOPS
+
+    def _sync_order(self, order_id: int, alpaca_order_id: str) -> dict[str, Any]:
+        """Refresh order status from Alpaca after submit."""
+        try:
+            time.sleep(0.5)
+            fresh = self.alpaca.get_order(alpaca_order_id)
+            self.store.update_order_status(
+                order_id,
+                fresh.get("status", "unknown"),
+                fresh.get("filled_avg_price"),
+            )
+            return fresh
+        except Exception as exc:
+            logger.warning("Order sync failed %s: %s", alpaca_order_id, exc)
+            return {"status": "submitted", "id": alpaca_order_id}
+
+    def execute(
+        self,
+        risk: RiskResult,
+        cycle_id: int,
+        decision_id: int,
+        price: float,
+        *,
+        force_market_buy: bool = False,
+    ) -> dict[str, Any] | None:
+        if not risk.approved or risk.qty <= 0:
+            return None
+
+        action = risk.action.normalized_action()
+        ticker = risk.action.ticker
+
+        if self.dry_run:
+            logger.info("DRY RUN %s %s qty=%s", action, ticker, risk.qty)
+            self.store.save_order(
+                cycle_id, ticker, action, risk.qty,
+                alpaca_order_id="dry-run", status="simulated", decision_id=decision_id,
+            )
+            if action == "SELL":
+                self.store.clear_pending_sell(ticker)
+            return {"id": "dry-run", "status": "simulated", "symbol": ticker}
+
+        try:
+            self.alpaca.cancel_orders_for_symbol(ticker)
+
+            if action == "BUY":
+                if force_market_buy:
+                    order = self.alpaca.submit_market_order(ticker, risk.qty, "BUY")
+                else:
+                    order = self.alpaca.submit_limit_order(
+                        ticker, risk.qty, "BUY", limit_price=price * 1.002,
+                    )
+                if self._use_broker_stops() and risk.action.stop:
+                    try:
+                        self.alpaca.submit_stop_order(ticker, risk.qty, risk.action.stop)
+                    except Exception as exc:
+                        logger.warning("Stop order failed for %s: %s", ticker, exc)
+            elif action == "SELL":
+                order = self.alpaca.submit_market_order(ticker, risk.qty, "SELL")
+            else:
+                return None
+
+            db_id = self.store.save_order(
+                cycle_id, ticker, action, risk.qty,
+                alpaca_order_id=order.get("id"),
+                status=order.get("status", "submitted"),
+                decision_id=decision_id,
+                filled_avg_price=order.get("filled_avg_price"),
+            )
+            if order.get("id") and order.get("id") != "dry-run":
+                order = self._sync_order(db_id, str(order["id"]))
+
+            if action == "SELL":
+                status = str(order.get("status", "")).lower()
+                if status in ("filled", "partially_filled") or "error" not in status:
+                    self.store.clear_pending_sell(ticker)
+                else:
+                    self.store.add_pending_sell(ticker)
+            return order
+        except Exception as exc:
+            logger.error("Order failed %s %s: %s", action, ticker, exc)
+            self.store.save_order(
+                cycle_id, ticker, action, risk.qty,
+                alpaca_order_id=None, status=f"error:{exc}", decision_id=decision_id,
+            )
+            if action == "SELL":
+                self.store.add_pending_sell(ticker)
+            return None
+
+    def retry_pending_sells(
+        self,
+        positions: list[dict[str, Any]],
+        cycle_id: int,
+    ) -> int:
+        """Retry market sells that failed in a prior cycle."""
+        pending = self.store.get_pending_sell_symbols()
+        if not pending:
+            return 0
+
+        pos_map = {p["symbol"].upper(): p for p in positions}
+        retried = 0
+        for sym in pending:
+            pos = pos_map.get(sym.upper())
+            if not pos:
+                self.store.clear_pending_sell(sym)
+                continue
+            qty = float(pos["qty"])
+            if qty <= 0:
+                self.store.clear_pending_sell(sym)
+                continue
+            try:
+                self.alpaca.cancel_orders_for_symbol(sym)
+                order = self.alpaca.submit_market_order(sym, qty, "SELL")
+                self.store.save_order(
+                    cycle_id, sym, "SELL", qty,
+                    alpaca_order_id=order.get("id"),
+                    status=order.get("status", "retry_submitted"),
+                )
+                status = str(order.get("status", "")).lower()
+                if "error" not in status:
+                    self.store.clear_pending_sell(sym)
+                retried += 1
+                logger.info("Retried sell %s qty=%s status=%s", sym, qty, status)
+            except Exception as exc:
+                logger.error("Retry sell failed %s: %s", sym, exc)
+        return retried
+
+    def flatten_positions(self, positions: list[dict[str, Any]], cycle_id: int) -> int:
+        """EOD / emergency — market sell every position."""
+        closed = 0
+        for pos in positions:
+            sym = pos["symbol"]
+            qty = float(pos["qty"])
+            if qty <= 0:
+                continue
+            try:
+                self.alpaca.cancel_orders_for_symbol(sym)
+                order = self.alpaca.submit_market_order(sym, qty, "SELL")
+                self.store.save_order(
+                    cycle_id, sym, "SELL", qty,
+                    alpaca_order_id=order.get("id"),
+                    status=order.get("status", "eod_flat"),
+                )
+                self.store.clear_pending_sell(sym)
+                closed += 1
+                logger.info("EOD flatten %s qty=%s", sym, qty)
+            except Exception as exc:
+                logger.error("EOD flatten failed %s: %s", sym, exc)
+                self.store.add_pending_sell(sym)
+        return closed
+
+    def ensure_stops(self, positions: list[dict[str, Any]], snapshots: dict[str, Any]) -> None:
+        """Place protective stops if missing (disabled for daily_active)."""
+        if self.dry_run or not self._use_broker_stops():
+            return
+        for pos in positions:
+            sym = pos["symbol"]
+            open_stops = [
+                o for o in self.alpaca.get_open_orders(sym)
+                if "stop" in str(o.get("type", "")).lower()
+            ]
+            if open_stops:
+                continue
+            snap = snapshots.get(sym)
+            stop_px = None
+            if snap:
+                stop_px = getattr(snap, "tight_stop", None) or getattr(snap, "stop", None)
+            if not stop_px:
+                continue
+            try:
+                stop_qty = max(1, int(float(pos["qty"])))
+                self.alpaca.submit_stop_order(sym, stop_qty, stop_px)
+                logger.info("Placed missing stop for %s qty=%s @ %s", sym, stop_qty, stop_px)
+            except Exception as exc:
+                logger.warning("Could not place stop for %s: %s", sym, exc)
+

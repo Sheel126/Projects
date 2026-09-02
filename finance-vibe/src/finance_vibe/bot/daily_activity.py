@@ -12,13 +12,16 @@ from finance_vibe.bot.models import AgentDecision, CycleContext, TradeAction, Ti
 # Sector tags for rotation — avoid stacking one sector
 SECTOR_MAP: dict[str, str] = {
     "NVDA": "tech", "AMD": "tech", "META": "tech", "PLTR": "tech", "SOFI": "fintech",
-    "TSLA": "auto", "HOOD": "fintech", "COIN": "crypto", "MARA": "crypto", "RIOT": "crypto",
-    "BAC": "finance", "XLF": "finance",
-    "XLE": "energy", "OXY": "energy",
+    "AAPL": "tech", "AMZN": "tech", "NFLX": "tech", "SMCI": "tech", "GOOGL": "tech",
+    "MSFT": "tech", "MU": "semis",
+    "TSLA": "auto", "HOOD": "fintech", "COIN": "crypto",
+    "JPM": "finance", "BAC": "finance", "XLF": "finance",
+    "XOM": "energy", "OXY": "energy", "XLE": "energy",
+    "GLD": "gold", "IWM": "smallcap",
     "NIO": "auto", "RIVN": "auto",
-    "IWM": "index", "SPY": "index", "QQQ": "index", "SOXL": "semis",
-    "XLK": "tech", "ARKK": "growth", "SMCI": "tech", "MU": "semis",
-    "F": "auto", "AAPL": "tech", "AMZN": "tech", "GOOGL": "tech", "MSFT": "tech",
+    "SPY": "index", "QQQ": "index", "SOXL": "semis",
+    "XLK": "tech", "ARKK": "growth",
+    "MARA": "crypto", "RIOT": "crypto",
 }
 
 

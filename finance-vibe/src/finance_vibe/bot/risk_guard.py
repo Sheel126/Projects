@@ -1,8 +1,17 @@
 """Hard risk limits — LLM cannot override."""
 from __future__ import annotations
 
+import math
+
 from finance_vibe.bot import config
+from finance_vibe.bot.market_hours import is_late_entry_window, is_market_open
 from finance_vibe.bot.models import CycleContext, RiskResult, TradeAction, TickerSnapshot
+from finance_vibe.bot.regime import benchmark_blocks_new_buys
+
+
+def _whole_shares(qty: float) -> int:
+    """Alpaca rejects fractional GTC stops — size buys in whole shares."""
+    return max(0, int(math.floor(qty + 1e-9)))
 
 
 class RiskGuard:
@@ -31,8 +40,26 @@ class RiskGuard:
         if act == "HOLD":
             return RiskResult(True, action, notes="HOLD")
 
-        if ctx.halted and act == "BUY":
-            return RiskResult(False, action, notes="Daily loss halt — no new buys")
+        if (ctx.halted or getattr(ctx, "entries_blocked", False)) and act == "BUY":
+            return RiskResult(
+                False, action,
+                notes="Entries blocked (halt or EOD) — no new buys",
+            )
+
+        if act == "BUY":
+            if not is_market_open():
+                return RiskResult(False, action, notes="Market not open — no buys")
+            if is_late_entry_window():
+                return RiskResult(False, action, notes="Late session — no new buys after 3:30 PM")
+            if benchmark_blocks_new_buys(ctx.benchmark_change_from_open_pct):
+                chg = ctx.benchmark_change_from_open_pct
+                return RiskResult(
+                    False, action,
+                    notes=(
+                        f"{config.BENCHMARK} red from open "
+                        f"({chg:.2f}% <= {config.BENCHMARK_BLOCK_PCT}%) — dip buys blocked"
+                    ),
+                )
 
         if act == "SELL":
             if not snapshot or not snapshot.in_position or snapshot.position_qty <= 0:
@@ -40,7 +67,12 @@ class RiskGuard:
             sell_pct = max(0.0, min(100.0, action.pct)) / 100.0
             if sell_pct <= 0:
                 sell_pct = 1.0
-            qty = snapshot.position_qty * sell_pct
+            if sell_pct >= 0.999:
+                qty = float(snapshot.position_qty)
+            else:
+                qty = float(_whole_shares(snapshot.position_qty * sell_pct))
+                if qty < 1:
+                    qty = float(snapshot.position_qty)
             notional = qty * snapshot.price
             if notional < 1.0 and qty < snapshot.position_qty:
                 return RiskResult(False, action, notes="Sell size too small")
@@ -69,7 +101,7 @@ class RiskGuard:
 
             deploy_pct = max(0.0, min(100.0, action.pct)) / 100.0
             if deploy_pct <= 0:
-                deploy_pct = self.risk_pct * 3  # default ~9% if LLM sends 0
+                deploy_pct = self.risk_pct * 3
             deploy_pct = min(deploy_pct, self.max_position_pct)
 
             notional = ctx.account_equity * deploy_pct
@@ -84,9 +116,16 @@ class RiskGuard:
             risk_budget = ctx.account_equity * self.risk_pct
             qty_by_risk = risk_budget / risk_per_share
             qty_by_notional = notional / price
-            qty = min(qty_by_risk, qty_by_notional)
-            notional = qty * price
+            raw_qty = min(qty_by_risk, qty_by_notional)
 
+            if config.WHOLE_SHARES_ONLY:
+                qty = float(_whole_shares(raw_qty))
+                if qty < 1:
+                    return RiskResult(False, action, notes="Sized below 1 whole share")
+            else:
+                qty = raw_qty
+
+            notional = qty * price
             if notional < self.min_notional:
                 return RiskResult(False, action, notes="Sized order below minimum")
 
@@ -96,8 +135,9 @@ class RiskGuard:
             )
             return RiskResult(
                 True, approved_action,
-                qty=round(qty, 4), notional=round(notional, 2),
-                notes=f"BUY ${notional:.0f} @ ~{price}, stop {stop}",
+                qty=round(qty, 4) if not config.WHOLE_SHARES_ONLY else qty,
+                notional=round(notional, 2),
+                notes=f"BUY {int(qty) if config.WHOLE_SHARES_ONLY else qty} sh @ ~{price}, stop {stop}",
             )
 
         return RiskResult(False, action, notes=f"Unknown action: {act}")
