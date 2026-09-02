@@ -367,9 +367,25 @@ class TestHealth:
         class FakeAlpaca:
             configured = True
 
-            def cancel_orders_for_symbol(self, symbol: str) -> int:
+            def cancel_orders_for_symbol(self, symbol: str, wait_sec: float = 1.0) -> int:
                 cancelled.append(symbol)
                 return 2
+
+            def get_open_orders(self, symbol=None):
+                return []
+
+            def get_positions(self):
+                return [{"symbol": "META", "qty": 10}]
+
+            def wait_for_flat(self, symbol, timeout_sec=45.0):
+                return True
+
+            def close_position(self, symbol):
+                cancelled.append(f"close:{symbol}")
+                return {"id": "o1", "status": "filled", "filled_avg_price": 500}
+
+            def get_order(self, order_id):
+                return {"id": order_id, "status": "filled", "filled_avg_price": 500}
 
             def submit_market_order(self, symbol, qty, side):
                 return {"id": "o1", "status": "submitted", "filled_avg_price": 0}
@@ -389,7 +405,7 @@ class TestHealth:
             notional=1000,
         )
         ex.execute(risk, cycle_id=1, decision_id=1, price=500.0)
-        assert cancelled == ["META"]
+        assert cancelled == ["META", "close:META"]
 
     def test_executor_no_broker_stops_in_daily_active(self, monkeypatch):
         from finance_vibe.bot.executor import Executor
@@ -403,11 +419,23 @@ class TestHealth:
         class FakeAlpaca:
             configured = True
 
-            def cancel_orders_for_symbol(self, symbol):
+            def cancel_orders_for_symbol(self, symbol, wait_sec=1.0):
                 return 0
 
-            def submit_market_order(self, symbol, qty, side):
+            def get_open_orders(self, symbol=None):
+                return []
+
+            def get_positions(self):
+                return [{"symbol": "NVDA", "qty": 10}]
+
+            def wait_for_flat(self, symbol, timeout_sec=45.0):
+                return True
+
+            def close_position(self, symbol):
                 return {"id": "r1", "status": "filled", "filled_avg_price": 100}
+
+            def get_order(self, order_id):
+                return {"id": order_id, "status": "filled", "filled_avg_price": 100}
 
         tmp_db.add_pending_sell("NVDA")
         ex = Executor(alpaca=FakeAlpaca(), store=tmp_db, dry_run=False)

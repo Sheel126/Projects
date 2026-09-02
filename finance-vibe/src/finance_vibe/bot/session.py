@@ -45,24 +45,35 @@ def prepare_clean_session(
         logger.warning("Cancel orders: %s", exc)
 
     if flatten:
-        positions = alpaca.get_positions()
-        for pos in positions:
-            sym = pos["symbol"]
-            qty = float(pos["qty"])
-            try:
-                alpaca.cancel_orders_for_symbol(sym)
-                order = alpaca.submit_market_order(sym, qty, "SELL")
+        try:
+            closed = alpaca.close_all_positions()
+            for item in closed:
                 report["positions_closed"].append({
-                    "symbol": sym, "qty": qty, "status": order.get("status"),
+                    "symbol": item["symbol"],
+                    "qty": item["qty"],
+                    "status": item["order"].get("status"),
                 })
-                logger.info("Flatten sell %s qty=%s", sym, qty)
-            except Exception as exc:
-                logger.error("Flatten failed %s: %s", sym, exc)
-                report["positions_closed"].append({
-                    "symbol": sym, "qty": qty, "status": f"error:{exc}",
-                })
-        if positions:
-            time.sleep(2.0)
+                logger.info("Flatten closed %s qty=%s", item["symbol"], item["qty"])
+            if closed:
+                time.sleep(2.0)
+        except Exception as exc:
+            logger.error("Flatten all failed: %s", exc)
+            positions = alpaca.get_positions()
+            for pos in positions:
+                sym = pos["symbol"]
+                qty = float(pos["qty"])
+                try:
+                    order = alpaca.close_position(sym)
+                    report["positions_closed"].append({
+                        "symbol": sym, "qty": qty, "status": order.get("status"),
+                    })
+                except Exception as exc2:
+                    logger.error("Flatten failed %s: %s", sym, exc2)
+                    report["positions_closed"].append({
+                        "symbol": sym, "qty": qty, "status": f"error:{exc2}",
+                    })
+            if positions:
+                time.sleep(2.0)
 
     acct = alpaca.get_account()
     equity = acct["equity"]

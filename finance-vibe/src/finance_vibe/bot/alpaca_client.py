@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time as time_mod
 from datetime import datetime, timedelta, time
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -285,7 +286,7 @@ class AlpacaClient:
             out = [o for o in out if o["symbol"] == symbol.upper()]
         return out
 
-    def cancel_orders_for_symbol(self, symbol: str) -> int:
+    def cancel_orders_for_symbol(self, symbol: str, wait_sec: float = 1.0) -> int:
         """Cancel all open orders for one symbol (frees shares for market sell)."""
         self._ensure_clients()
         symbol = symbol.upper()
@@ -295,18 +296,53 @@ class AlpacaClient:
                 self._trading.cancel_order_by_id(o["id"])
             except Exception as exc:
                 logger.warning("Cancel order %s %s: %s", symbol, o.get("id"), exc)
+        if orders and wait_sec > 0:
+            time_mod.sleep(wait_sec)
         return len(orders)
+
+    def wait_for_flat(self, symbol: str, timeout_sec: float = 30.0) -> bool:
+        """Wait until no position remains for symbol."""
+        symbol = symbol.upper()
+        deadline = time_mod.time() + timeout_sec
+        while time_mod.time() < deadline:
+            if not any(p["symbol"] == symbol for p in self.get_positions()):
+                return True
+            time_mod.sleep(1.0)
+        return not any(p["symbol"] == symbol for p in self.get_positions())
+
+    def close_position(self, symbol: str) -> dict[str, Any]:
+        """Close entire position — cancel stale orders first, one sell only."""
+        self._ensure_clients()
+        symbol = symbol.upper()
+        existing_sells = [
+            o for o in self.get_open_orders(symbol)
+            if "SELL" in str(o.get("side", "")).upper()
+        ]
+        if existing_sells:
+            return existing_sells[0]
+        self.cancel_orders_for_symbol(symbol, wait_sec=2.0)
+        order = self._trading.close_position(symbol)
+        return self._order_dict(order)
+
+    def close_all_positions(self) -> list[dict[str, Any]]:
+        """Flatten book — one symbol at a time, wait for each to fill."""
+        self.cancel_all_orders()
+        time_mod.sleep(2.0)
+        closed: list[dict[str, Any]] = []
+        for pos in list(self.get_positions()):
+            sym = pos["symbol"]
+            try:
+                order = self.close_position(sym)
+                self.wait_for_flat(sym, timeout_sec=45.0)
+                closed.append({"symbol": sym, "qty": pos["qty"], "order": order})
+            except Exception as exc:
+                logger.error("close_position failed %s: %s", sym, exc)
+                raise
+        return closed
 
     def flatten_all_positions(self) -> list[dict[str, Any]]:
         """Market-sell every open position."""
-        closed: list[dict[str, Any]] = []
-        for pos in self.get_positions():
-            sym = pos["symbol"]
-            qty = float(pos["qty"])
-            self.cancel_orders_for_symbol(sym)
-            order = self.submit_market_order(sym, qty, "SELL")
-            closed.append({"symbol": sym, "qty": qty, "order": order})
-        return closed
+        return self.close_all_positions()
 
     def cancel_all_orders(self) -> None:
         self._ensure_clients()

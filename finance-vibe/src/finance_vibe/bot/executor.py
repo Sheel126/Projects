@@ -26,13 +26,41 @@ class Executor:
 
     @staticmethod
     def _use_broker_stops() -> bool:
-        """Broker stops lock shares and block market sells — never in daily_active."""
         if config.TRADING_MODE == "daily_active":
             return False
         return config.USE_BROKER_STOPS
 
+    def _free_symbol_for_trade(self, symbol: str) -> None:
+        n = self.alpaca.cancel_orders_for_symbol(symbol, wait_sec=2.0)
+        if n:
+            logger.info("Freed %s: cancelled %s open order(s)", symbol, n)
+
+    def _submit_sell(self, ticker: str, qty: float) -> dict[str, Any]:
+        """Exit via close_position — never stack duplicate sells (held_for_orders)."""
+        ticker = ticker.upper()
+        self._free_symbol_for_trade(ticker)
+
+        open_sells = [
+            o for o in self.alpaca.get_open_orders(ticker)
+            if "SELL" in str(o.get("side", "")).upper()
+        ]
+        if open_sells:
+            logger.info("Reusing open sell for %s (not duplicating)", ticker)
+            return open_sells[0]
+
+        positions = self.alpaca.get_positions()
+        pos = next((p for p in positions if p["symbol"] == ticker), None)
+        if not pos:
+            raise RuntimeError(f"No position to sell for {ticker}")
+
+        pos_qty = float(pos["qty"])
+        if qty >= pos_qty * 0.999:
+            order = self.alpaca.close_position(ticker)
+            self.alpaca.wait_for_flat(ticker, timeout_sec=45.0)
+            return order
+        return self.alpaca.submit_market_order(ticker, qty, "SELL")
+
     def _sync_order(self, order_id: int, alpaca_order_id: str) -> dict[str, Any]:
-        """Refresh order status from Alpaca after submit."""
         try:
             time.sleep(0.5)
             fresh = self.alpaca.get_order(alpaca_order_id)
@@ -72,22 +100,16 @@ class Executor:
             return {"id": "dry-run", "status": "simulated", "symbol": ticker}
 
         try:
-            self.alpaca.cancel_orders_for_symbol(ticker)
-
             if action == "BUY":
+                self._free_symbol_for_trade(ticker)
                 if force_market_buy:
                     order = self.alpaca.submit_market_order(ticker, risk.qty, "BUY")
                 else:
                     order = self.alpaca.submit_limit_order(
                         ticker, risk.qty, "BUY", limit_price=price * 1.002,
                     )
-                if self._use_broker_stops() and risk.action.stop:
-                    try:
-                        self.alpaca.submit_stop_order(ticker, risk.qty, risk.action.stop)
-                    except Exception as exc:
-                        logger.warning("Stop order failed for %s: %s", ticker, exc)
             elif action == "SELL":
-                order = self.alpaca.submit_market_order(ticker, risk.qty, "SELL")
+                order = self._submit_sell(ticker, risk.qty)
             else:
                 return None
 
@@ -103,10 +125,10 @@ class Executor:
 
             if action == "SELL":
                 status = str(order.get("status", "")).lower()
-                if status in ("filled", "partially_filled") or "error" not in status:
-                    self.store.clear_pending_sell(ticker)
-                else:
+                if "error" in status or "rejected" in status:
                     self.store.add_pending_sell(ticker)
+                else:
+                    self.store.clear_pending_sell(ticker)
             return order
         except Exception as exc:
             logger.error("Order failed %s %s: %s", action, ticker, exc)
@@ -123,7 +145,6 @@ class Executor:
         positions: list[dict[str, Any]],
         cycle_id: int,
     ) -> int:
-        """Retry market sells that failed in a prior cycle."""
         pending = self.store.get_pending_sell_symbols()
         if not pending:
             return 0
@@ -140,24 +161,20 @@ class Executor:
                 self.store.clear_pending_sell(sym)
                 continue
             try:
-                self.alpaca.cancel_orders_for_symbol(sym)
-                order = self.alpaca.submit_market_order(sym, qty, "SELL")
+                order = self._submit_sell(sym, qty)
                 self.store.save_order(
                     cycle_id, sym, "SELL", qty,
                     alpaca_order_id=order.get("id"),
                     status=order.get("status", "retry_submitted"),
                 )
-                status = str(order.get("status", "")).lower()
-                if "error" not in status:
-                    self.store.clear_pending_sell(sym)
+                self.store.clear_pending_sell(sym)
                 retried += 1
-                logger.info("Retried sell %s qty=%s status=%s", sym, qty, status)
+                logger.info("Retried sell %s qty=%s status=%s", sym, qty, order.get("status"))
             except Exception as exc:
                 logger.error("Retry sell failed %s: %s", sym, exc)
         return retried
 
     def flatten_positions(self, positions: list[dict[str, Any]], cycle_id: int) -> int:
-        """EOD / emergency — market sell every position."""
         closed = 0
         for pos in positions:
             sym = pos["symbol"]
@@ -165,8 +182,7 @@ class Executor:
             if qty <= 0:
                 continue
             try:
-                self.alpaca.cancel_orders_for_symbol(sym)
-                order = self.alpaca.submit_market_order(sym, qty, "SELL")
+                order = self._submit_sell(sym, qty)
                 self.store.save_order(
                     cycle_id, sym, "SELL", qty,
                     alpaca_order_id=order.get("id"),
@@ -181,7 +197,6 @@ class Executor:
         return closed
 
     def ensure_stops(self, positions: list[dict[str, Any]], snapshots: dict[str, Any]) -> None:
-        """Place protective stops if missing (disabled for daily_active)."""
         if self.dry_run or not self._use_broker_stops():
             return
         for pos in positions:
