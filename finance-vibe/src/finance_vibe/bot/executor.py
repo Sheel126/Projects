@@ -45,12 +45,10 @@ class Executor:
         return config.USE_BROKER_STOPS
 
     def _free_symbol_for_trade(self, symbol: str) -> None:
-        """Cancel open orders before a BUY — poll until clear when any cancelled."""
-        n = self.alpaca.cancel_orders_for_symbol(
-            symbol, wait_sec=0, until_clear=True, timeout_sec=5.0,
-        )
+        """Cancel stale BUY/stops for this symbol only — never a working SELL."""
+        n = self.alpaca.cancel_stale_non_sell_orders(timeout_sec=8.0, symbol=symbol)
         if n:
-            logger.info("Freed %s: cancelled %s open order(s)", symbol, n)
+            logger.info("Freed %s: cancelled %s stale BUY/stop order(s)", symbol, n)
 
     def _submit_sell(self, ticker: str, qty: float) -> dict[str, Any]:
         """Idempotent exit: reuse open SELL, cancel-poll, sell remaining live qty.
@@ -78,7 +76,7 @@ class Executor:
 
         # 3) Cancel blocking orders → poll until clear, then re-check
         if self.alpaca.get_open_orders(ticker):
-            cleared = self.alpaca.cancel_and_wait_clear(ticker, timeout_sec=5.0)
+            cleared = self.alpaca.cancel_and_wait_clear(ticker, timeout_sec=8.0)
             open_sells = self.alpaca.get_open_sell_orders(ticker)
             if open_sells:
                 return open_sells[0]
@@ -163,6 +161,12 @@ class Executor:
 
         try:
             if action == "BUY":
+                if self.alpaca.get_open_sell_orders(ticker):
+                    logger.warning(
+                        "Skip BUY %s — working SELL still open (not doubling in)",
+                        ticker,
+                    )
+                    return None
                 self._free_symbol_for_trade(ticker)
                 if force_market_buy:
                     order = self.alpaca.submit_market_order(ticker, risk.qty, "BUY")
@@ -192,17 +196,13 @@ class Executor:
             if action == "SELL":
                 status = _status_norm(order)
                 still_held = self.alpaca.get_position_qty(ticker) > 0
-                if status in _TERMINAL_BAD or "error" in status:
-                    self.store.add_pending_sell(ticker)
-                elif still_held and status in _IN_FLIGHT:
-                    # pending_new / new / partially_filled — NOT complete
+                if still_held:
+                    # Any non-flat leftover must retry — never drop pending on unknown status
                     self.store.add_pending_sell(ticker)
                     logger.info(
-                        "Sell in-flight %s status=%s — pending retry until flat",
+                        "Sell leftover %s status=%s — pending retry until flat",
                         ticker, status,
                     )
-                elif not still_held:
-                    self.store.clear_pending_sell(ticker)
                 else:
                     self.store.clear_pending_sell(ticker)
             return order
@@ -248,10 +248,9 @@ class Executor:
                     status=order.get("status", "retry_submitted"),
                 )
                 still_held = self.alpaca.get_position_qty(sym) > 0
-                if still_held and status in _IN_FLIGHT:
-                    # Keep pending — do not clear until flat
+                if still_held:
                     logger.info(
-                        "Retried sell %s still in-flight status=%s",
+                        "Retried sell %s still open status=%s",
                         sym, status,
                     )
                 else:

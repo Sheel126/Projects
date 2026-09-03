@@ -569,7 +569,7 @@ def main(argv: list[str] | None = None) -> int:
             flatten=not args.no_flatten,
         )
         print(json.dumps(result, indent=2))
-        return 0
+        return 0 if result.get("status") == "completed" else 1
 
     if args.command == "resume-session":
         from finance_vibe.bot.session import resume_session

@@ -73,6 +73,27 @@ def prepare_clean_session(
                 logger.info("Flatten closed %s qty=%s", item["symbol"], item["qty"])
             if closed:
                 time.sleep(2.0)
+            leftover = alpaca.get_positions()
+            if leftover:
+                logger.error(
+                    "Morning flatten still holding %s — retrying",
+                    [p["symbol"] for p in leftover],
+                )
+                for pos in leftover:
+                    try:
+                        alpaca.close_position(pos["symbol"])
+                        alpaca.wait_for_flat(pos["symbol"], timeout_sec=45.0)
+                    except Exception as exc3:
+                        logger.error("Flatten retry failed %s: %s", pos["symbol"], exc3)
+                leftover = alpaca.get_positions()
+                if leftover:
+                    logger.error(
+                        "PREPARE INCOMPLETE — still holding %s. "
+                        "Do not start the day until flat, or inspect Alpaca.",
+                        [p["symbol"] for p in leftover],
+                    )
+                    report["status"] = "incomplete"
+                    report["still_holding"] = [p["symbol"] for p in leftover]
         except Exception as exc:
             logger.error("Flatten all failed: %s", exc)
             positions = alpaca.get_positions()
@@ -91,6 +112,15 @@ def prepare_clean_session(
                     })
             if positions:
                 time.sleep(2.0)
+
+        leftover = alpaca.get_positions()
+        if leftover:
+            logger.error(
+                "PREPARE INCOMPLETE — still holding %s",
+                [p["symbol"] for p in leftover],
+            )
+            report["status"] = "incomplete"
+            report["still_holding"] = [p["symbol"] for p in leftover]
 
     acct = alpaca.get_account()
     equity = acct["equity"]
@@ -111,8 +141,8 @@ def prepare_clean_session(
     if flatten:
         # Morning clean start clears day-loss buy block; resume keeps it
         store.set_state(f"buys_blocked_day_loss_{today.isoformat()}", "0")
+        store.clear_all_pending_sells()
     store.set_halted_today(today, False)
-    store.clear_all_pending_sells()
     store.log_activity(
         f"Session {report['mode']} | equity=${equity:,.2f} | "
         f"cancelled {report['orders_cancelled']} orders | "

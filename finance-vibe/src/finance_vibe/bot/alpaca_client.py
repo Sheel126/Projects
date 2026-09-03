@@ -391,7 +391,7 @@ class AlpacaClient:
             return {"id": None, "status": "no_position", "symbol": symbol, "qty": 0.0}
 
         if self.get_open_orders(symbol):
-            cleared = self.cancel_and_wait_clear(symbol, timeout_sec=5.0)
+            cleared = self.cancel_and_wait_clear(symbol, timeout_sec=8.0)
             # Re-check for a SELL that may still be open after partial cancel
             existing_sells = self.get_open_sell_orders(symbol)
             if existing_sells:
@@ -443,12 +443,14 @@ class AlpacaClient:
             time_mod.sleep(0.25)
         return not self.get_open_orders()
 
-    def cancel_stale_non_sell_orders(self, timeout_sec: float = 5.0) -> int:
+    def cancel_stale_non_sell_orders(
+        self, timeout_sec: float = 8.0, symbol: str | None = None,
+    ) -> int:
         """Cancel BUY/stop orders that lock shares. Never cancel a working SELL."""
         self._ensure_clients()
         cancelled = 0
         symbols: set[str] = set()
-        for o in self.get_open_orders():
+        for o in self.get_open_orders(symbol):
             side = str(o.get("side", "")).upper()
             otype = str(o.get("type", "")).lower()
             if "SELL" in side and "stop" not in otype:
@@ -461,8 +463,31 @@ class AlpacaClient:
             except Exception as exc:
                 logger.warning("Cancel stale order %s: %s", o.get("id"), exc)
         for sym in symbols:
-            self.wait_until_orders_clear(sym, timeout_sec=timeout_sec)
+            self.wait_until_non_sell_orders_clear(sym, timeout_sec=timeout_sec)
         return cancelled
+
+    def wait_until_non_sell_orders_clear(
+        self, symbol: str, timeout_sec: float = 8.0, poll_sec: float = 0.25,
+    ) -> bool:
+        """Wait until BUY/stops are gone; working SELLs may remain."""
+        symbol = symbol.upper()
+        deadline = time_mod.time() + timeout_sec
+
+        def _blocking() -> list[dict[str, Any]]:
+            out = []
+            for o in self.get_open_orders(symbol):
+                side = str(o.get("side", "")).upper()
+                otype = str(o.get("type", "")).lower()
+                if "SELL" in side and "stop" not in otype:
+                    continue
+                out.append(o)
+            return out
+
+        while time_mod.time() < deadline:
+            if not _blocking():
+                return True
+            time_mod.sleep(poll_sec)
+        return not _blocking()
 
     def cancel_open_buy_orders(self) -> int:
         """Cancel all open BUY orders (late session / cleanup). Leave SELLs."""

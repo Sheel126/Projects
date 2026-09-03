@@ -928,7 +928,7 @@ class TestHealth:
             def cancel_all_orders(self):
                 raise AssertionError("resume must not cancel_all (would kill working sells)")
 
-            def cancel_stale_non_sell_orders(self, timeout_sec=5.0):
+            def cancel_stale_non_sell_orders(self, timeout_sec=5.0, symbol=None):
                 return 1
 
             def get_open_orders(self):
@@ -950,10 +950,12 @@ class TestHealth:
         )
         tmp_db.set_day_start_equity(today, 100_000.0)
         tmp_db.set_state("buys_blocked_day_loss_2026-09-02", "1")
+        tmp_db.add_pending_sell("NVDA")
         report = resume_session(alpaca=FakeAlpaca(), store=tmp_db)
         assert report["day_start_equity"] == 100_000.0
-        # Resume keeps day-loss block
+        # Resume keeps day-loss block AND pending sells
         assert tmp_db.get_state("buys_blocked_day_loss_2026-09-02") == "1"
+        assert "NVDA" in tmp_db.get_pending_sell_symbols()
 
     def test_cancel_stale_leaves_working_sells(self):
         from finance_vibe.bot.alpaca_client import AlpacaClient
@@ -968,7 +970,6 @@ class TestHealth:
         client.get_open_orders = lambda symbol=None: [
             o for o in live if o["id"] not in cancelled
         ]
-        client.wait_until_orders_clear = lambda *a, **k: True
 
         class _Trading:
             def cancel_order_by_id(self, oid):
