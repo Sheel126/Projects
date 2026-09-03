@@ -214,28 +214,37 @@ class SignalEngine:
             logger.debug("vibe score %s: %s", ticker, exc)
 
         # --- Swing scanner (high_beta) ---
-        indicated = add_indicators(df.copy(), mode=self.swing_profile)
-        if not indicated.empty:
-            latest = indicated.iloc[-1]
-            snap.rsi = round(float(latest["RSI"]), 2)
-            snap.ema20 = round(float(latest["EMA20"]), 2)
-            snap.ema50 = round(float(latest["EMA50"]), 2)
-            snap.atr = round(float(latest["ATR"]), 2)
+        try:
+            indicated = add_indicators(df.copy(), mode=self.swing_profile)
+            if not indicated.empty:
+                latest = indicated.iloc[-1]
+                if "RSI" in indicated.columns and pd.notna(latest.get("RSI")):
+                    snap.rsi = round(float(latest["RSI"]), 2)
+                if "EMA20" in indicated.columns and pd.notna(latest.get("EMA20")):
+                    snap.ema20 = round(float(latest["EMA20"]), 2)
+                if "EMA50" in indicated.columns and pd.notna(latest.get("EMA50")):
+                    snap.ema50 = round(float(latest["EMA50"]), 2)
+                if "ATR" in indicated.columns and pd.notna(latest.get("ATR")):
+                    snap.atr = round(float(latest["ATR"]), 2)
 
-        swing_row = detect_setup_at_bar(df, ticker, mode=self.swing_profile, benchmark_df=bench)
-        if swing_row:
-            snap.setup_type = swing_row.get("Setup Type")
-            snap.setup_notes = swing_row.get("Notes")
-            snap.regime_ok = swing_row.get("Regime OK")
-            snap.rs_63d = swing_row.get("RS 63d")
-            snap.signal_sources.append("swing_confirmed")
-            self._apply_levels_from_row(swing_row, snap)
-        else:
-            near = evaluate_setup(indicated.iloc[:-1], mode=self.swing_profile) if len(indicated) >= 3 else None
-            if near:
-                snap.setup_type = f"PENDING_{near['Setup Type']}"
-                snap.setup_notes = near.get("Notes", "") + " (unconfirmed)"
-                snap.signal_sources.append("swing_pending")
+            swing_row = detect_setup_at_bar(df, ticker, mode=self.swing_profile, benchmark_df=bench)
+            if swing_row:
+                snap.setup_type = swing_row.get("Setup Type")
+                snap.setup_notes = swing_row.get("Notes")
+                snap.regime_ok = swing_row.get("Regime OK")
+                rs = swing_row.get("RS 63d")
+                if rs is not None and pd.notna(rs):
+                    snap.rs_63d = float(rs)
+                snap.signal_sources.append("swing_confirmed")
+                self._apply_levels_from_row(swing_row, snap)
+            else:
+                near = evaluate_setup(indicated.iloc[:-1], mode=self.swing_profile) if len(indicated) >= 3 else None
+                if near:
+                    snap.setup_type = f"PENDING_{near['Setup Type']}"
+                    snap.setup_notes = near.get("Notes", "") + " (unconfirmed)"
+                    snap.signal_sources.append("swing_pending")
+        except Exception as exc:
+            logger.warning("Swing scan failed %s: %s", ticker, exc)
 
         # --- Coiled Cobra ---
         try:
@@ -375,11 +384,33 @@ class SignalEngine:
         for sym in symbols:
             pinfo = all_prices.get(sym, {"price": 0, "change_pct": 0, "change_from_open_pct": 0})
             pinfo["_benchmark_change_pct"] = bench_change
-            snapshots.append(
-                self.build_snapshot(
-                    sym, pinfo, pos_map.get(sym), order_flags.get(sym, {}),
+            try:
+                snapshots.append(
+                    self.build_snapshot(
+                        sym, pinfo, pos_map.get(sym), order_flags.get(sym, {}),
+                    )
                 )
-            )
+            except Exception:
+                logger.exception("Watchlist snapshot failed %s — using price/position only", sym)
+                pos = pos_map.get(sym)
+                snapshots.append(
+                    TickerSnapshot(
+                        ticker=sym,
+                        price=round(float(pinfo.get("price") or 0), 2),
+                        change_pct=round(float(pinfo.get("change_pct") or 0), 3),
+                        change_from_open_pct=round(float(pinfo.get("change_from_open_pct") or 0), 3),
+                        rsi=None, ema20=None, ema50=None, atr=None,
+                        setup_type=None, setup_notes=None,
+                        entry=None, stop=None, target1=None, target2=None,
+                        vs_qqq_pct=None, regime_ok=None,
+                        in_position=bool(pos),
+                        position_qty=float(pos["qty"]) if pos else 0.0,
+                        position_pnl_pct=float(pos.get("pnl_pct", 0)) if pos else None,
+                        conviction=0.0,
+                        has_open_buy_order=order_flags.get(sym, {}).get("buy", False),
+                        has_open_sell_order=order_flags.get(sym, {}).get("sell", False),
+                    )
+                )
 
         self._attach_ml_ranks(snapshots)
         for s in snapshots:

@@ -11,8 +11,10 @@ assert _spec.loader is not None
 _spec.loader.exec_module(_mod)
 
 import argparse
+import atexit
 import json
 import logging
+import os
 import sys
 import time
 from datetime import date
@@ -455,6 +457,28 @@ class TradingRunner:
         }
 
     def run_daemon(self) -> None:
+        pid_path = config.BOT_DATA_DIR / "runner.pid"
+        if pid_path.exists():
+            try:
+                old = int(pid_path.read_text(encoding="utf-8").strip())
+                os.kill(old, 0)
+                raise RuntimeError(
+                    f"Runner already running (pid {old}). Close the other FV Bot - Runner window."
+                )
+            except (ValueError, OSError, ProcessLookupError):
+                pass
+        config.ensure_dirs()
+        pid_path.write_text(str(os.getpid()), encoding="utf-8")
+
+        def _clear_pid() -> None:
+            try:
+                if pid_path.exists() and pid_path.read_text(encoding="utf-8").strip() == str(os.getpid()):
+                    pid_path.unlink()
+            except OSError:
+                pass
+
+        atexit.register(_clear_pid)
+
         logger.info(
             "Daemon started | mode=%s | watchlist=%s | cycle=%sm | max_pos=%s",
             config.TRADING_MODE, config.WATCHLIST, config.CYCLE_MINUTES,

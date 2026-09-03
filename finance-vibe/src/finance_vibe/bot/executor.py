@@ -179,7 +179,7 @@ class Executor:
                 if _status_norm(order) == "no_position":
                     self.store.clear_pending_sell(ticker)
                     logger.info("SELL %s skipped — already flat", ticker)
-                    return order
+                    return None
             else:
                 return None
 

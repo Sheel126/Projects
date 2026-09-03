@@ -50,7 +50,7 @@ def prepare_clean_session(
         if flatten:
             alpaca.cancel_all_orders()
             if open_before:
-                alpaca.wait_until_all_orders_clear(timeout_sec=5.0)
+                alpaca.wait_until_all_orders_clear(timeout_sec=8.0)
             report["orders_cancelled"] = len(open_before)
             logger.info("Cancelled %s open orders", len(open_before))
         else:

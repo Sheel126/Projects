@@ -92,6 +92,16 @@ CREATE TABLE IF NOT EXISTS activity_log (
 """
 
 
+def _json_safe(obj: Any) -> Any:
+    """json.dumps helper — numpy/pandas scalars must not crash a cycle."""
+    if hasattr(obj, "item"):
+        try:
+            return obj.item()
+        except Exception:
+            return str(obj)
+    return str(obj)
+
+
 class BotStore:
     def __init__(self, db_path: str | None = None) -> None:
         config.ensure_dirs()
@@ -132,7 +142,7 @@ class BotStore:
         with self._conn() as conn:
             cur = conn.execute(
                 "INSERT INTO cycles(created_at, status, context_json) VALUES(?, ?, ?)",
-                (now, "running", json.dumps(context)),
+                (now, "running", json.dumps(context, default=_json_safe)),
             )
             return int(cur.lastrowid)
 
@@ -150,7 +160,7 @@ class BotStore:
                 "llm_summary = ?, error = ? WHERE id = ?",
                 (
                     status,
-                    json.dumps(llm_response) if llm_response else None,
+                    json.dumps(llm_response, default=_json_safe) if llm_response else None,
                     summary,
                     error,
                     cycle_id,
