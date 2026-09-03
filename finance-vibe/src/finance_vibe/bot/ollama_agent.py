@@ -220,8 +220,9 @@ class OllamaAgent:
             return self._rule_based_fallback(ctx)
 
         brief = build_decision_brief(ctx)
+        from finance_vibe.bot.store import _json_safe
         user_prompt = brief + "\n\n=== RAW JSON ===\n" + json.dumps(
-            ctx.to_prompt_dict(), indent=2
+            ctx.to_prompt_dict(), indent=2, default=_json_safe
         )
         try:
             raw = self._chat(user_prompt)

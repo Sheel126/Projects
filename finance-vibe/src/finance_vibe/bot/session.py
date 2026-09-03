@@ -2,13 +2,54 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
+from pathlib import Path
 
+from finance_vibe.bot import config
 from finance_vibe.bot.alpaca_client import AlpacaClient
-from finance_vibe.bot.market_hours import now_et
+from finance_vibe.bot.market_hours import is_market_open, now_et
 from finance_vibe.bot.store import BotStore
 
 logger = logging.getLogger(__name__)
+
+
+def runner_pid_path() -> Path:
+    return config.BOT_DATA_DIR / "runner.pid"
+
+
+def read_alive_runner_pid() -> int | None:
+    """PID of a live runner, or None if the lock is stale/missing."""
+    path = runner_pid_path()
+    if not path.exists():
+        return None
+    try:
+        pid = int(path.read_text(encoding="utf-8").strip())
+    except (ValueError, OSError):
+        return None
+    if pid <= 0 or pid == os.getpid():
+        return None
+    try:
+        os.kill(pid, 0)
+        return pid
+    except (OSError, ProcessLookupError):
+        return None
+
+
+def write_runner_pid() -> Path:
+    config.ensure_dirs()
+    path = runner_pid_path()
+    path.write_text(str(os.getpid()), encoding="utf-8")
+    return path
+
+
+def clear_runner_pid() -> None:
+    path = runner_pid_path()
+    try:
+        if path.exists() and path.read_text(encoding="utf-8").strip() == str(os.getpid()):
+            path.unlink()
+    except OSError:
+        pass
 
 
 def prepare_clean_session(
@@ -44,6 +85,29 @@ def prepare_clean_session(
 
     acct = alpaca.get_account()
     report["equity_before"] = acct["equity"]
+
+    if flatten:
+        live = read_alive_runner_pid()
+        if live is not None:
+            msg = (
+                f"Runner already running (pid {live}). "
+                "Do not flatten — close that window, or use -Resume after it is stopped."
+            )
+            logger.error(msg)
+            report["status"] = "refused"
+            report["error"] = msg
+            return report
+        if is_market_open() and store.get_day_start_equity(today) is not None:
+            msg = (
+                "Market is open and today's session already started. "
+                "Full start would flatten live positions and reset day PnL. "
+                "Use .\\start-paper-bot.ps1 -Resume"
+            )
+            logger.error(msg)
+            report["status"] = "refused"
+            report["error"] = msg
+            report["day_start_equity"] = store.get_day_start_equity(today)
+            return report
 
     try:
         open_before = alpaca.get_open_orders()

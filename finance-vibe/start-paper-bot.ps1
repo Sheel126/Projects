@@ -33,6 +33,23 @@ $Python = $VenvPython
 $Check = Join-Path $Root "src\finance_vibe\bot\check_setup.py"
 $Dashboard = Join-Path $Root "src\finance_vibe\bot\dashboard.py"
 $Runner = Join-Path $Root "src\finance_vibe\bot\runner.py"
+$PidFile = Join-Path $Root "data\bot\runner.pid"
+
+if (Test-Path $PidFile) {
+    $oldPid = 0
+    try { $oldPid = [int]((Get-Content $PidFile -ErrorAction Stop | Select-Object -First 1).Trim()) } catch { $oldPid = 0 }
+    if ($oldPid -gt 0) {
+        $alive = Get-Process -Id $oldPid -ErrorAction SilentlyContinue
+        if ($alive) {
+            Write-Host ""
+            Write-Host "ERROR: Runner already running (pid $oldPid)." -ForegroundColor Red
+            Write-Host "Do not start twice - that would flatten live positions." -ForegroundColor Yellow
+            Write-Host "Close the 'FV Bot - Runner' window, or crash-only: .\start-paper-bot.ps1 -Resume" -ForegroundColor Yellow
+            Write-Host ""
+            exit 1
+        }
+    }
+}
 
 function Start-BotWindow {
     param(

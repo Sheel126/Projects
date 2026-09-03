@@ -74,13 +74,14 @@ class Executor:
             logger.info("No position to sell for %s — noop", ticker)
             return {"id": None, "status": "no_position", "symbol": ticker, "qty": 0.0}
 
-        # 3) Cancel blocking orders → poll until clear, then re-check
+        # 3) Cancel blocking BUY/stops only — never a working SELL
         if self.alpaca.get_open_orders(ticker):
-            cleared = self.alpaca.cancel_and_wait_clear(ticker, timeout_sec=8.0)
+            self.alpaca.cancel_stale_non_sell_orders(timeout_sec=8.0, symbol=ticker)
             open_sells = self.alpaca.get_open_sell_orders(ticker)
             if open_sells:
                 return open_sells[0]
-            if not cleared:
+            leftover = self.alpaca.get_open_orders(ticker)
+            if leftover:
                 logger.error(
                     "Sell blocked %s: orders still open after cancel timeout",
                     ticker,

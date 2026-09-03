@@ -498,9 +498,16 @@ class TestHealth:
                 return list(self._orders)
 
             def cancel_and_wait_clear(self, symbol, timeout_sec=5.0):
-                events.append(f"cancel_wait:{symbol}")
-                self._orders = []
-                return True
+                raise AssertionError("sell path must not cancel working SELLs")
+
+            def cancel_stale_non_sell_orders(self, timeout_sec=8.0, symbol=None):
+                events.append(f"cancel_stale:{symbol}")
+                self._orders = [
+                    o for o in self._orders
+                    if "SELL" in str(o.get("side", "")).upper()
+                    and "stop" not in str(o.get("type", "")).lower()
+                ]
+                return 1
 
             def cancel_orders_for_symbol(self, symbol, wait_sec=1.0, **kw):
                 events.append(f"cancel:{symbol}")
@@ -543,7 +550,7 @@ class TestHealth:
             notional=1000,
         )
         ex.execute(risk, cycle_id=1, decision_id=1, price=500.0)
-        assert "cancel_wait:META" in events
+        assert "cancel_stale:META" in events
         assert "close:META" in events
 
     def test_executor_no_broker_stops_in_daily_active(self, monkeypatch):
@@ -615,6 +622,9 @@ class TestHealth:
                 return self.get_open_sell_orders(symbol)
 
             def cancel_and_wait_clear(self, symbol, timeout_sec=5.0):
+                raise AssertionError("should not cancel when reusing sell")
+
+            def cancel_stale_non_sell_orders(self, timeout_sec=8.0, symbol=None):
                 raise AssertionError("should not cancel when reusing sell")
 
             def close_position(self, symbol):
@@ -749,8 +759,11 @@ class TestHealth:
             def get_open_orders(self, symbol=None):
                 return [{"id": "stuck", "side": "BUY", "status": "pending_cancel"}]
 
+            def cancel_stale_non_sell_orders(self, timeout_sec=8.0, symbol=None):
+                return 0  # cancel requested but still open
+
             def cancel_and_wait_clear(self, symbol, timeout_sec=5.0):
-                return False  # still open
+                raise AssertionError("must not cancel working SELLs")
 
             def close_position(self, symbol):
                 raise AssertionError("must not close while orders stuck")
@@ -818,9 +831,12 @@ class TestHealth:
                     return [{"id": "stale_buy", "side": "BUY", "status": "new"}]
                 return []
 
-            def cancel_and_wait_clear(self, symbol, timeout_sec=5.0):
+            def cancel_stale_non_sell_orders(self, timeout_sec=8.0, symbol=None):
                 self.phase = "clear"
-                return True
+                return 1
+
+            def cancel_and_wait_clear(self, symbol, timeout_sec=5.0):
+                raise AssertionError("must not cancel working SELLs")
 
             def close_position(self, symbol):
                 assert self.phase == "clear"
@@ -956,6 +972,83 @@ class TestHealth:
         # Resume keeps day-loss block AND pending sells
         assert tmp_db.get_state("buys_blocked_day_loss_2026-09-02") == "1"
         assert "NVDA" in tmp_db.get_pending_sell_symbols()
+
+    def test_prepare_refuses_midday_flatten(self, tmp_db, monkeypatch):
+        from finance_vibe.bot.session import prepare_clean_session
+
+        class FakeAlpaca:
+            configured = True
+
+            def get_account(self):
+                return {"equity": 101_000.0, "cash": 50_000.0}
+
+            def cancel_all_orders(self):
+                raise AssertionError("midday prepare must not cancel")
+
+            def close_all_positions(self):
+                raise AssertionError("midday prepare must not flatten")
+
+            def get_open_orders(self):
+                return []
+
+            def get_positions(self):
+                return [{"symbol": "NVDA", "qty": 8}]
+
+        monkeypatch.setattr(
+            "finance_vibe.bot.session.now_et",
+            lambda: __import__("datetime").datetime(
+                2026, 9, 3, 11, 15,
+                tzinfo=__import__("zoneinfo").ZoneInfo("America/New_York"),
+            ),
+        )
+        monkeypatch.setattr("finance_vibe.bot.session.is_market_open", lambda: True)
+        tmp_db.set_day_start_equity(__import__("datetime").date(2026, 9, 3), 100_000.0)
+        report = prepare_clean_session(alpaca=FakeAlpaca(), store=tmp_db)
+        assert report["status"] == "refused"
+        assert tmp_db.get_day_start_equity(__import__("datetime").date(2026, 9, 3)) == 100_000.0
+
+    def test_prepare_refuses_if_runner_alive(self, tmp_db, monkeypatch):
+        from finance_vibe.bot.session import prepare_clean_session
+
+        class FakeAlpaca:
+            configured = True
+
+            def get_account(self):
+                return {"equity": 100_000.0, "cash": 50_000.0}
+
+            def cancel_all_orders(self):
+                raise AssertionError("must not flatten while runner is live")
+
+            def close_all_positions(self):
+                raise AssertionError("must not flatten while runner is live")
+
+            def get_open_orders(self):
+                return []
+
+            def get_positions(self):
+                return []
+
+        monkeypatch.setattr("finance_vibe.bot.session.read_alive_runner_pid", lambda: 12345)
+        monkeypatch.setattr(
+            "finance_vibe.bot.session.now_et",
+            lambda: __import__("datetime").datetime(
+                2026, 9, 3, 9, 10,
+                tzinfo=__import__("zoneinfo").ZoneInfo("America/New_York"),
+            ),
+        )
+        report = prepare_clean_session(alpaca=FakeAlpaca(), store=tmp_db)
+        assert report["status"] == "refused"
+
+    def test_open_sell_orders_ignore_stops(self):
+        from finance_vibe.bot.alpaca_client import AlpacaClient
+
+        client = AlpacaClient.__new__(AlpacaClient)
+        client.get_open_orders = lambda symbol=None: [
+            {"id": "stop1", "side": "SELL", "type": "stop", "symbol": "NVDA"},
+            {"id": "sell1", "side": "SELL", "type": "market", "symbol": "NVDA"},
+        ]
+        sells = client.get_open_sell_orders("NVDA")
+        assert [o["id"] for o in sells] == ["sell1"]
 
     def test_cancel_stale_leaves_working_sells(self):
         from finance_vibe.bot.alpaca_client import AlpacaClient

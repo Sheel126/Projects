@@ -14,7 +14,6 @@ import argparse
 import atexit
 import json
 import logging
-import os
 import sys
 import time
 from datetime import date
@@ -41,7 +40,12 @@ from finance_vibe.bot.models import AgentDecision, CycleContext, TradeAction
 from finance_vibe.bot.ollama_agent import OllamaAgent
 from finance_vibe.bot.regime import benchmark_blocks_new_buys, regime_summary
 from finance_vibe.bot.risk_guard import RiskGuard
-from finance_vibe.bot.session import prepare_clean_session
+from finance_vibe.bot.session import (
+    clear_runner_pid,
+    prepare_clean_session,
+    read_alive_runner_pid,
+    write_runner_pid,
+)
 from finance_vibe.bot.store import BotStore
 
 logging.basicConfig(
@@ -457,27 +461,13 @@ class TradingRunner:
         }
 
     def run_daemon(self) -> None:
-        pid_path = config.BOT_DATA_DIR / "runner.pid"
-        if pid_path.exists():
-            try:
-                old = int(pid_path.read_text(encoding="utf-8").strip())
-                os.kill(old, 0)
-                raise RuntimeError(
-                    f"Runner already running (pid {old}). Close the other FV Bot - Runner window."
-                )
-            except (ValueError, OSError, ProcessLookupError):
-                pass
-        config.ensure_dirs()
-        pid_path.write_text(str(os.getpid()), encoding="utf-8")
-
-        def _clear_pid() -> None:
-            try:
-                if pid_path.exists() and pid_path.read_text(encoding="utf-8").strip() == str(os.getpid()):
-                    pid_path.unlink()
-            except OSError:
-                pass
-
-        atexit.register(_clear_pid)
+        live = read_alive_runner_pid()
+        if live is not None:
+            raise RuntimeError(
+                f"Runner already running (pid {live}). Close the other FV Bot - Runner window."
+            )
+        write_runner_pid()
+        atexit.register(clear_runner_pid)
 
         logger.info(
             "Daemon started | mode=%s | watchlist=%s | cycle=%sm | max_pos=%s",

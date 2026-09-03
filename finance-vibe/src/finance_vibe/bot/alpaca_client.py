@@ -287,12 +287,15 @@ class AlpacaClient:
         return out
 
     def get_open_sell_orders(self, symbol: str) -> list[dict[str, Any]]:
-        """Open SELL orders for a symbol (any status that still locks shares)."""
+        """Working exit SELLs only — stop-sells are not reusable flatten orders."""
         symbol = symbol.upper()
-        return [
-            o for o in self.get_open_orders(symbol)
-            if "SELL" in str(o.get("side", "")).upper()
-        ]
+        out: list[dict[str, Any]] = []
+        for o in self.get_open_orders(symbol):
+            side = str(o.get("side", "")).upper()
+            otype = str(o.get("type", "")).lower()
+            if "SELL" in side and "stop" not in otype:
+                out.append(o)
+        return out
 
     def wait_until_orders_clear(
         self,
@@ -391,12 +394,13 @@ class AlpacaClient:
             return {"id": None, "status": "no_position", "symbol": symbol, "qty": 0.0}
 
         if self.get_open_orders(symbol):
-            cleared = self.cancel_and_wait_clear(symbol, timeout_sec=8.0)
+            self.cancel_stale_non_sell_orders(timeout_sec=8.0, symbol=symbol)
             # Re-check for a SELL that may still be open after partial cancel
             existing_sells = self.get_open_sell_orders(symbol)
             if existing_sells:
                 return existing_sells[0]
-            if not cleared:
+            leftover = self.get_open_orders(symbol)
+            if leftover:
                 raise RuntimeError(
                     f"Cannot close {symbol}: open orders remain after cancel timeout"
                 )
