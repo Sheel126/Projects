@@ -21,6 +21,7 @@ from finance_vibe.bot.daily_activity import (
     sector_for,
 )
 from finance_vibe.bot.intraday_signals import enrich_intraday_metrics
+from finance_vibe.bot.market_hours import session_elapsed_fraction
 from finance_vibe.bot.models import TickerSnapshot
 from finance_vibe.coiled_cobra import add_macro_indicators, evaluate_coiled_cobra
 from finance_vibe.coiled_cobra_backtest import detect_cobra_setup_at_bar
@@ -65,11 +66,15 @@ def compute_conviction(snap: TickerSnapshot) -> float:
 
 
 def compute_relative_volume(df: pd.DataFrame, lookback: int = 20) -> float | None:
-    """Today's volume / average of prior N sessions."""
+    """Today's pace / average of prior N sessions.
+
+    Today's bar is partial while the session is open, so it is projected to a
+    full session before comparing — otherwise every name reads ~0.05 at the open.
+    """
     if df is None or df.empty or "Volume" not in df.columns or len(df) < lookback + 1:
         return None
     vols = df["Volume"].astype(float)
-    today = float(vols.iloc[-1])
+    today = float(vols.iloc[-1]) / session_elapsed_fraction()
     avg = float(vols.iloc[-(lookback + 1):-1].mean())
     if avg <= 0:
         return None

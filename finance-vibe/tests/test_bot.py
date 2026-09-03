@@ -287,11 +287,34 @@ class TestOllamaAgent:
         snap.active_score = compute_active_score(snap)
         assert _buy_eligible(snap, _ctx(watchlist=[snap]), 0)
 
-    def test_compute_relative_volume(self):
-        import pandas as pd
+    def test_compute_relative_volume(self, monkeypatch):
         from finance_vibe.bot.signal_engine import compute_relative_volume
         df = __import__("pandas").DataFrame({"Volume": [100] * 20 + [250]})
+        monkeypatch.setattr(
+            "finance_vibe.bot.signal_engine.session_elapsed_fraction", lambda: 1.0,
+        )
         assert compute_relative_volume(df) == 2.5
+
+    def test_relative_volume_projects_partial_session(self, monkeypatch):
+        """Early-session volume must not read as a dead name."""
+        from finance_vibe.bot.signal_engine import compute_relative_volume
+        df = __import__("pandas").DataFrame({"Volume": [1000] * 20 + [51]})
+        monkeypatch.setattr(
+            "finance_vibe.bot.signal_engine.session_elapsed_fraction", lambda: 20 / 390,
+        )
+        # 20 of 390 minutes elapsed at ~1/20th of average volume = on pace
+        assert compute_relative_volume(df) > 0.9
+
+    def test_session_elapsed_fraction_bounds(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        from finance_vibe.bot.market_hours import session_elapsed_fraction
+        et = ZoneInfo("America/New_York")
+        assert session_elapsed_fraction(datetime(2026, 9, 3, 9, 0, tzinfo=et)) == 1.0
+        assert session_elapsed_fraction(datetime(2026, 9, 3, 16, 30, tzinfo=et)) == 1.0
+        assert session_elapsed_fraction(datetime(2026, 9, 3, 9, 31, tzinfo=et)) == 0.05
+        midday = session_elapsed_fraction(datetime(2026, 9, 3, 12, 45, tzinfo=et))
+        assert 0.49 < midday < 0.51
 
     def test_daily_quick_sell(self, monkeypatch):
         from finance_vibe.bot.daily_activity import should_quick_sell

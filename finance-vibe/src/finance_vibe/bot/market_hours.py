@@ -149,5 +149,20 @@ def next_daemon_wakeup(cycle_minutes: int = 20, dt: datetime | None = None) -> d
     return nxt
 
 
+def session_elapsed_fraction(dt: datetime | None = None) -> float:
+    """Fraction of the regular session elapsed, floored at 0.05 (~20 min).
+
+    Today's daily bar is partial intraday, so volume must be scaled by this to
+    compare against full prior sessions.
+    """
+    dt = dt or now_et()
+    open_dt = datetime.combine(dt.date(), MARKET_OPEN, tzinfo=ET)
+    close_dt = datetime.combine(dt.date(), MARKET_CLOSE, tzinfo=ET)
+    if dt <= open_dt or dt >= close_dt:
+        return 1.0
+    total = (close_dt - open_dt).total_seconds()
+    return max(0.05, (dt - open_dt).total_seconds() / total)
+
+
 def seconds_until(dt: datetime) -> float:
     return max(0.0, (dt - now_et()).total_seconds())
