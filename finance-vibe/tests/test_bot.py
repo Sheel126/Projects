@@ -892,6 +892,9 @@ class TestHealth:
             def cancel_all_orders(self):
                 pass
 
+            def wait_until_all_orders_clear(self, timeout_sec=5.0):
+                return True
+
             def get_open_orders(self):
                 return [{"id": "1"}, {"id": "2"}]
 
@@ -923,7 +926,10 @@ class TestHealth:
                 return {"equity": 100_300.0, "cash": 50_000.0}
 
             def cancel_all_orders(self):
-                pass
+                raise AssertionError("resume must not cancel_all (would kill working sells)")
+
+            def cancel_stale_non_sell_orders(self, timeout_sec=5.0):
+                return 1
 
             def get_open_orders(self):
                 return []
@@ -948,6 +954,30 @@ class TestHealth:
         assert report["day_start_equity"] == 100_000.0
         # Resume keeps day-loss block
         assert tmp_db.get_state("buys_blocked_day_loss_2026-09-02") == "1"
+
+    def test_cancel_stale_leaves_working_sells(self):
+        from finance_vibe.bot.alpaca_client import AlpacaClient
+
+        cancelled: list[str] = []
+        live = [
+            {"id": "b1", "side": "BUY", "type": "limit", "symbol": "NVDA"},
+            {"id": "s1", "side": "SELL", "type": "market", "symbol": "NVDA"},
+        ]
+        client = AlpacaClient.__new__(AlpacaClient)
+        client._ensure_clients = lambda: None
+        client.get_open_orders = lambda symbol=None: [
+            o for o in live if o["id"] not in cancelled
+        ]
+        client.wait_until_orders_clear = lambda *a, **k: True
+
+        class _Trading:
+            def cancel_order_by_id(self, oid):
+                cancelled.append(oid)
+
+        client._trading = _Trading()
+        n = client.cancel_stale_non_sell_orders()
+        assert n == 1
+        assert cancelled == ["b1"]
 
     def test_activity_log(self, tmp_db):
         tmp_db.log_activity("test message", phase="cycle", cycle_id=1)

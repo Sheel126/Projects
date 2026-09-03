@@ -47,11 +47,17 @@ def prepare_clean_session(
 
     try:
         open_before = alpaca.get_open_orders()
-        alpaca.cancel_all_orders()
-        report["orders_cancelled"] = len(open_before)
-        logger.info("Cancelled %s open orders", len(open_before))
-        if open_before:
-            time.sleep(1.5)
+        if flatten:
+            alpaca.cancel_all_orders()
+            if open_before:
+                alpaca.wait_until_all_orders_clear(timeout_sec=5.0)
+            report["orders_cancelled"] = len(open_before)
+            logger.info("Cancelled %s open orders", len(open_before))
+        else:
+            # Resume: never cancel a working SELL — only stale BUY/stops
+            n = alpaca.cancel_stale_non_sell_orders()
+            report["orders_cancelled"] = n
+            logger.info("Resume cancelled %s stale BUY/stop order(s)", n)
     except Exception as exc:
         logger.warning("Cancel orders: %s", exc)
 

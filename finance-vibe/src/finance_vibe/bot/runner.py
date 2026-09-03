@@ -178,14 +178,13 @@ class TradingRunner:
         self._cancel_late_session_buys()
 
         try:
-            if open_orders:
-                self.alpaca.cancel_all_orders()
-                time.sleep(1.5)
+            n = self.alpaca.cancel_stale_non_sell_orders()
+            if n:
                 self._log(
-                    f"Cancelled {len(open_orders)} stale open orders before cycle",
+                    f"Cancelled {n} stale BUY/stop order(s); left working SELLs",
                     "trade",
                 )
-                open_orders = []
+            open_orders = self.alpaca.get_open_orders()
         except Exception as exc:
             logger.warning("Pre-cycle order cancel failed: %s", exc)
 
@@ -209,19 +208,19 @@ class TradingRunner:
 
         cycle_id = self.store.start_cycle(ctx.to_prompt_dict())
         self._log(
-            f"Cycle {cycle_id} started | equity=${equity:,.2f} | day P&L {day_pnl_pct:.2f}%",
+            f"Cycle {cycle_id} started | equity=${equity:,.2f} | day PnL {day_pnl_pct:.2f}%",
             "cycle", cycle_id,
         )
 
         if self.risk.day_loss_caution(day_pnl_pct) and not day_loss_blocks:
             self._log(
-                f"DAY CAUTION: day P&L {day_pnl_pct:.2f}% <= {config.DAY_CAUTION_PCT}% "
+                f"DAY CAUTION: day PnL {day_pnl_pct:.2f}% <= {config.DAY_CAUTION_PCT}% "
                 f"— no size increase; buys still allowed if eligible",
                 "risk", cycle_id, level="warn",
             )
         if day_loss_blocks:
             self._log(
-                f"DAY LOSS BLOCK: day P&L {day_pnl_pct:.2f}% — no new buys "
+                f"DAY LOSS BLOCK: day PnL {day_pnl_pct:.2f}% — no new buys "
                 f"(threshold {config.DAY_BLOCK_BUYS_PCT}%)",
                 "risk", cycle_id, level="warn",
             )
@@ -415,8 +414,11 @@ class TradingRunner:
 
         except Exception as exc:
             logger.exception("Cycle %s failed", cycle_id)
-            self.store.finish_cycle(cycle_id, "error", error=str(exc))
-            raise
+            try:
+                self.store.finish_cycle(cycle_id, "error", error=str(exc))
+            except Exception:
+                logger.exception("Could not persist cycle error")
+            return {"status": "error", "cycle_id": cycle_id, "error": str(exc)}
 
     def run_eod_report(self) -> dict:
         today = now_et().date()

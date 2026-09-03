@@ -435,17 +435,38 @@ class AlpacaClient:
         self._ensure_clients()
         self._trading.cancel_orders()
 
-    def cancel_open_buy_orders(self) -> int:
-        """Cancel all open BUY orders (late session / cleanup)."""
+    def wait_until_all_orders_clear(self, timeout_sec: float = 5.0) -> bool:
+        deadline = time_mod.time() + timeout_sec
+        while time_mod.time() < deadline:
+            if not self.get_open_orders():
+                return True
+            time_mod.sleep(0.25)
+        return not self.get_open_orders()
+
+    def cancel_stale_non_sell_orders(self, timeout_sec: float = 5.0) -> int:
+        """Cancel BUY/stop orders that lock shares. Never cancel a working SELL."""
+        self._ensure_clients()
         cancelled = 0
+        symbols: set[str] = set()
         for o in self.get_open_orders():
-            if "BUY" in str(o.get("side", "")).upper():
-                try:
-                    self._trading.cancel_order_by_id(o["id"])
-                    cancelled += 1
-                except Exception as exc:
-                    logger.warning("Cancel buy order %s: %s", o.get("id"), exc)
+            side = str(o.get("side", "")).upper()
+            otype = str(o.get("type", "")).lower()
+            if "SELL" in side and "stop" not in otype:
+                continue
+            try:
+                self._trading.cancel_order_by_id(o["id"])
+                cancelled += 1
+                if o.get("symbol"):
+                    symbols.add(str(o["symbol"]).upper())
+            except Exception as exc:
+                logger.warning("Cancel stale order %s: %s", o.get("id"), exc)
+        for sym in symbols:
+            self.wait_until_orders_clear(sym, timeout_sec=timeout_sec)
         return cancelled
+
+    def cancel_open_buy_orders(self) -> int:
+        """Cancel all open BUY orders (late session / cleanup). Leave SELLs."""
+        return self.cancel_stale_non_sell_orders()
 
     def get_order(self, order_id: str) -> dict[str, Any]:
         self._ensure_clients()
