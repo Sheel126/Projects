@@ -17,14 +17,16 @@ def _whole_shares(qty: float) -> int:
 class RiskGuard:
     def __init__(
         self,
-        risk_per_trade_pct: float | None = None,
         max_positions: int | None = None,
         max_position_pct: float | None = None,
         min_notional: float | None = None,
     ) -> None:
-        self.risk_pct = risk_per_trade_pct or config.RISK_PER_TRADE_PCT
+        # Sizing is flat at ACTIVE_POSITION_PCT; max_position_pct is only a
+        # sanity rail one step above it, not a tuning knob.
         self.max_positions = max_positions or config.MAX_POSITIONS
-        self.max_position_pct = max_position_pct or config.MAX_POSITION_PCT
+        self.max_position_pct = max_position_pct or (
+            config.ACTIVE_POSITION_PCT / 100.0 * 1.2
+        )
         self.min_notional = min_notional or config.MIN_ORDER_NOTIONAL
 
     def validate(
@@ -101,7 +103,7 @@ class RiskGuard:
 
             deploy_pct = max(0.0, min(100.0, action.pct)) / 100.0
             if deploy_pct <= 0:
-                deploy_pct = self.risk_pct * 3
+                deploy_pct = config.ACTIVE_POSITION_PCT / 100.0
             deploy_pct = min(deploy_pct, self.max_position_pct)
             # Day-loss caution: no size increase above baseline active position %
             if self.day_loss_caution(ctx.day_pnl_pct):
@@ -113,14 +115,14 @@ class RiskGuard:
             if notional < self.min_notional:
                 return RiskResult(False, action, notes=f"Below min notional ${self.min_notional}")
 
-            risk_per_share = price - stop
-            if risk_per_share <= 0:
+            if price - stop <= 0:
                 return RiskResult(False, action, notes="Invalid risk per share")
 
-            risk_budget = ctx.account_equity * self.risk_pct
-            qty_by_risk = risk_budget / risk_per_share
-            qty_by_notional = notional / price
-            raw_qty = min(qty_by_risk, qty_by_notional)
+            # Flat notional sizing. The old stop-distance risk budget also
+            # capped quantity, which silently made position size depend on the
+            # stop; with ATR-scaled bands that meant volatile names got tiny
+            # positions. Size is now exactly deploy_pct of equity.
+            raw_qty = notional / price
 
             if config.WHOLE_SHARES_ONLY:
                 qty = float(_whole_shares(raw_qty))
@@ -156,8 +158,8 @@ class RiskGuard:
         return halted, pnl_pct * 100
 
     def day_loss_caution(self, day_pnl_pct: float) -> bool:
-        """Soft breaker: day PnL at/below caution threshold (e.g. -0.5%)."""
-        return day_pnl_pct <= config.DAY_CAUTION_PCT
+        """Soft warning at half the hard block. Logs only; blocks nothing."""
+        return day_pnl_pct <= config.DAY_BLOCK_BUYS_PCT / 2
 
     def day_loss_blocks_buys(self, day_pnl_pct: float) -> bool:
         """Hard breaker: stop NEW buys for rest of session (e.g. -1.0%). Sells/EOD still OK."""

@@ -7,8 +7,6 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from finance_vibe.bot import config
-
 ET = ZoneInfo("America/New_York")
 MARKET_OPEN = time(9, 30)
 
@@ -35,7 +33,7 @@ def compute_opening_range(
     bars: pd.DataFrame, orb_minutes: int | None = None,
 ) -> dict[str, float | None]:
     """High/low of first N minutes after 9:30 ET."""
-    minutes = orb_minutes or config.ORB_MINUTES
+    minutes = orb_minutes or 15
     if bars is None or bars.empty:
         return {"or_high": None, "or_low": None, "or_mid": None}
 

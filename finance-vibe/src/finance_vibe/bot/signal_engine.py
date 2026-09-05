@@ -25,7 +25,6 @@ from finance_vibe.bot.market_hours import session_elapsed_fraction
 from finance_vibe.bot.models import TickerSnapshot
 from finance_vibe.coiled_cobra import add_macro_indicators, evaluate_coiled_cobra
 from finance_vibe.coiled_cobra_backtest import detect_cobra_setup_at_bar
-from finance_vibe.ml_ranker import ML_PRED_COL, ML_RANK_COL, attach_ml_ranks, predict_returns
 from finance_vibe.swing_scanner import add_indicators, detect_setup_at_bar, evaluate_setup
 from finance_vibe.trade_planner import calculate_stock_levels
 
@@ -45,8 +44,6 @@ def compute_conviction(snap: TickerSnapshot) -> float:
         score += 15.0
     if snap.coiled_cobra_grade:
         score += 25.0 if "A" in snap.coiled_cobra_grade else 15.0
-    if snap.ml_rank is not None and snap.ml_rank <= 5:
-        score += max(0, 21 - snap.ml_rank * 4)
     if snap.regime_ok:
         score += 10.0
     if snap.rs_63d is not None and snap.rs_63d > 0:
@@ -296,45 +293,16 @@ class SignalEngine:
         snap.tight_stop = compute_tight_stop(snap)
         return snap
 
-    def _attach_ml_ranks(self, snapshots: list[TickerSnapshot]) -> None:
-        rows = []
-        for s in snapshots:
-            if s.coiled_cobra_score is None:
-                continue
-            close = s.price or 1.0
-            rows.append({
-                "Symbol": s.ticker,
-                "Score": s.coiled_cobra_score,
-                "Close": close,
-                "EMA20": s.ema20 or close,
-                "EMA50": s.ema50 or close,
-                "ATR": s.atr or 1.0,
-                "Fib 61.8%": None,
-                "Fib 78.6%": None,
-            })
-        if not rows:
-            return
-        frame = pd.DataFrame(rows)
-        try:
-            ranked = attach_ml_ranks(frame, mode=COBRA_MODE)
-        except Exception:
-            preds = predict_returns(frame, mode=COBRA_MODE)
-            ranked = frame.copy()
-            ranked[ML_PRED_COL] = preds
-            ranked[ML_RANK_COL] = preds.rank(method="dense", ascending=False)
+    def _finalize_conviction(self, snapshots: list[TickerSnapshot]) -> None:
+        """Compute conviction once every other signal is attached.
 
-        by_sym = {str(r["Symbol"]).upper(): r for _, r in ranked.iterrows()}
+        This used to also call the ML ranker, which could never return
+        anything: no trained model file ships with the repo, and the caller
+        hardcoded both Fib features to None, so every row was dropped as
+        incomplete. ml_rank was None in all 1,882 stored snapshots. Retrain
+        and re-wire the ranker before reintroducing it.
+        """
         for s in snapshots:
-            row = by_sym.get(s.ticker)
-            if row is None:
-                continue
-            pred = row.get(ML_PRED_COL)
-            rank = row.get(ML_RANK_COL)
-            if pd.notna(pred):
-                s.ml_pred_return = round(float(pred), 4)
-            if pd.notna(rank):
-                s.ml_rank = int(rank)
-                s.signal_sources.append("ml_rank")
             s.conviction = compute_conviction(s)
 
     def build_market_regime(self, benchmark_price: dict[str, float]) -> dict[str, Any]:
@@ -417,7 +385,7 @@ class SignalEngine:
                     )
                 )
 
-        self._attach_ml_ranks(snapshots)
+        self._finalize_conviction(snapshots)
         for s in snapshots:
             s.sector = sector_for(s.ticker)
             s.active_score = compute_active_score(s)

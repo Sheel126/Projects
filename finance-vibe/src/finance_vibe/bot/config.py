@@ -30,11 +30,13 @@ OLLAMA_TIMEOUT_SEC = int(os.getenv("OLLAMA_TIMEOUT_SEC", "120"))
 TRADING_MODE = os.getenv("BOT_TRADING_MODE", "daily_active").strip().lower()
 
 # Day-3: diversified volatile + macro names (no 3x ETFs / junk miners)
+# IWM and JPM removed: over the last 30 sessions they reached +1.2% off the
+# open on only 6.7% and 10% of days, so the profit target is unreachable.
 DEFAULT_WATCHLIST = [
     "NVDA", "AMD", "META", "TSLA", "PLTR", "SMCI",
     "COIN", "HOOD", "SOFI",
-    "AAPL", "AMZN", "NFLX", "JPM",
-    "XOM", "GLD", "IWM",
+    "AAPL", "AMZN", "NFLX",
+    "XOM", "GLD",
 ]
 WATCHLIST = [
     t.strip().upper()
@@ -50,70 +52,60 @@ STRATEGY_NOTES = os.getenv(
     "TP ~1.2%, SL ~1.8%, flat by 3:55. Block buys when QQQ red, after 3:30, or day PnL <= -1%.",
 )
 
-# Daily-active trading parameters (Day-3: 5 slots, ~13% each)
+# ---------------------------------------------------------------------------
+# THE NINE TUNABLE KNOBS
+#
+# Day-5 rewrite. The previous config carried 35 strategy parameters fitted to
+# 28 trades; the standard is ~30 trades per parameter, so almost all of them
+# were noise-fitting. Anything not on this list was deleted rather than tuned.
+# Do not add a knob back unless it changes the *logic*, not the backtest score.
+# ---------------------------------------------------------------------------
+
+# 1. Exit distance, as a multiple of the stock's own daily ATR. Replaces the
+#    fixed take-profit/stop pair: watchlist ATR spans 2.0% (GLD) to 6.8%
+#    (COIN), so no single percentage fits both.
+ATR_EXIT_MULT = float(os.getenv("BOT_ATR_EXIT_MULT", "0.5"))
+
+# 2. The single quality floor. Everything the old vibe/conviction/setup gates
+#    tested is already priced into active_score.
+MIN_BUY_SCORE = float(os.getenv("BOT_MIN_BUY_SCORE", "38"))
+
+# 3/4. One entry band, replacing four overlapping "distance from open" knobs
+#      and the duplicated strength/pullback code paths.
+ENTRY_MIN_FROM_OPEN_PCT = float(os.getenv("BOT_ENTRY_MIN_FROM_OPEN_PCT", "-2.5"))
+ENTRY_MAX_FROM_OPEN_PCT = float(os.getenv("BOT_ENTRY_MAX_FROM_OPEN_PCT", "3.5"))
+
+# 5. Anti-chase ceiling: never buy something already stretched above VWAP.
+VWAP_BUY_MAX_ABOVE_PCT = float(os.getenv("BOT_VWAP_BUY_MAX_ABOVE_PCT", "1.0"))
+
+# 6/7. Sizing and concurrency.
+ACTIVE_POSITION_PCT = float(os.getenv("BOT_ACTIVE_POSITION_PCT", "13"))
+MAX_POSITIONS = int(os.getenv("MAX_POSITIONS", "5"))
+
+# 8. Daily brake: stop opening new positions once the day is this far down.
+DAY_BLOCK_BUYS_PCT = float(os.getenv("BOT_DAY_BLOCK_BUYS_PCT", "-1.0"))
+
+# 9. Regime brake: the only defence against a falling market.
+BENCHMARK_BLOCK_PCT = float(os.getenv("BOT_BENCHMARK_BLOCK_PCT", "-0.4"))
+
+# --- structural settings, not strategy tuning -------------------------------
 REQUIRE_DAILY_ACTIVITY = os.getenv("BOT_REQUIRE_DAILY_ACTIVITY", "false").lower() in (
     "1", "true", "yes",
 )
-DIP_BUY_FROM_OPEN_PCT = float(os.getenv("BOT_DIP_BUY_FROM_OPEN_PCT", "-0.25"))
-QUICK_PROFIT_PCT = float(os.getenv("BOT_QUICK_PROFIT_PCT", "1.2"))
-QUICK_STOP_LOSS_PCT = float(os.getenv("BOT_QUICK_STOP_LOSS_PCT", "1.8"))
-ACTIVE_POSITION_PCT = float(os.getenv("BOT_ACTIVE_POSITION_PCT", "13"))
 ACTIVE_MAX_BUYS_PER_CYCLE = int(os.getenv("BOT_ACTIVE_MAX_BUYS_PER_CYCLE", "2"))
-ACTIVE_MIN_BUY_SCORE = float(os.getenv("BOT_ACTIVE_MIN_BUY_SCORE", "38"))
-ACTIVE_SETUP_MIN_BUY_SCORE = float(os.getenv("BOT_ACTIVE_SETUP_MIN_BUY_SCORE", "30"))
-ACTIVE_MIN_RSI = float(os.getenv("BOT_ACTIVE_MIN_RSI", "30"))
-ACTIVE_MAX_RSI = float(os.getenv("BOT_ACTIVE_MAX_RSI", "68"))
-ACTIVE_SELL_RSI = float(os.getenv("BOT_ACTIVE_SELL_RSI", "72"))
-ACTIVE_SELL_FROM_OPEN_PCT = float(os.getenv("BOT_ACTIVE_SELL_FROM_OPEN_PCT", "2.5"))
-ACTIVE_STOP_PCT = float(os.getenv("BOT_ACTIVE_STOP_PCT", "1.8"))
-ACTIVE_ATR_MULT = float(os.getenv("BOT_ACTIVE_ATR_MULT", "0.85"))
 WHOLE_SHARES_ONLY = os.getenv("BOT_WHOLE_SHARES_ONLY", "true").lower() in (
     "1", "true", "yes",
 )
-
-# Quality hybrid buys (research stack + timing) — not pure knife-catching
-BUY_MODE = os.getenv("BOT_BUY_MODE", "quality").strip().lower()
-MAX_DIP_BUY_PCT = float(os.getenv("BOT_MAX_DIP_BUY_PCT", "-2.5"))
-MIN_RVOL = float(os.getenv("BOT_MIN_RVOL", "0.75"))
-MIN_BUY_CONVICTION = float(os.getenv("BOT_MIN_BUY_CONVICTION", "35"))
-MIN_BUY_VIBE = float(os.getenv("BOT_MIN_BUY_VIBE", "5"))
-REQUIRE_STRUCTURE = os.getenv("BOT_REQUIRE_STRUCTURE", "true").lower() in (
-    "1", "true", "yes",
-)
-ALLOW_STRENGTH_BUYS = os.getenv("BOT_ALLOW_STRENGTH_BUYS", "true").lower() in (
-    "1", "true", "yes",
-)
-
-# Regime gating — block dip-buys when benchmark is red from open
-BENCHMARK_BLOCK_PCT = float(os.getenv("BOT_BENCHMARK_BLOCK_PCT", "-0.4"))
-LATE_ENTRY_HOUR = int(os.getenv("BOT_LATE_ENTRY_HOUR", "15"))
-LATE_ENTRY_MINUTE = int(os.getenv("BOT_LATE_ENTRY_MINUTE", "30"))
-
-# Intraday research signals
 USE_INTRADAY_SIGNALS = os.getenv("BOT_USE_INTRADAY_SIGNALS", "true").lower() in (
     "1", "true", "yes",
 )
-ORB_MINUTES = int(os.getenv("BOT_ORB_MINUTES", "15"))
+LATE_ENTRY_HOUR = int(os.getenv("BOT_LATE_ENTRY_HOUR", "15"))
+LATE_ENTRY_MINUTE = int(os.getenv("BOT_LATE_ENTRY_MINUTE", "30"))
 EOD_FLAT_HOUR = int(os.getenv("BOT_EOD_FLAT_HOUR", "15"))
 EOD_FLAT_MINUTE = int(os.getenv("BOT_EOD_FLAT_MINUTE", "55"))
-VWAP_BUY_BELOW_PCT = float(os.getenv("BOT_VWAP_BUY_BELOW_PCT", "-0.1"))
-IBS_OVERSOLD = float(os.getenv("BOT_IBS_OVERSOLD", "0.25"))
-
-# Risk (Day-4: five ~13% positions + intraday day-loss breakers)
-RISK_PER_TRADE_PCT = float(os.getenv("RISK_PER_TRADE_PCT", "0.035"))
-MAX_POSITIONS = int(os.getenv("MAX_POSITIONS", "5"))
-MAX_POSITION_PCT = float(os.getenv("MAX_POSITION_PCT", "0.18"))
 DAILY_LOSS_HALT_PCT = float(os.getenv("DAILY_LOSS_HALT_PCT", "0.05"))
-# Day PnL % thresholds (negative). Caution warns; block stops NEW buys only.
-DAY_CAUTION_PCT = float(os.getenv("BOT_DAY_CAUTION_PCT", "-0.5"))
-DAY_BLOCK_BUYS_PCT = float(os.getenv("BOT_DAY_BLOCK_BUYS_PCT", "-1.0"))
 MIN_ORDER_NOTIONAL = float(os.getenv("MIN_ORDER_NOTIONAL", "50"))
 CYCLE_MINUTES = int(os.getenv("CYCLE_MINUTES", "20"))
-
-# Day-4 quality unlock defaults (strength window + soft score)
-STRENGTH_MAX_OPEN_PCT = float(os.getenv("BOT_STRENGTH_MAX_OPEN_PCT", "3.5"))
-PULLBACK_MAX_OPEN_PCT = float(os.getenv("BOT_PULLBACK_MAX_OPEN_PCT", "0.5"))
-MIN_RVOL_HARD_FLOOR = float(os.getenv("BOT_MIN_RVOL_HARD_FLOOR", "0.6"))  # dead-name floor
 
 # Dashboard
 DASHBOARD_HOST = os.getenv("BOT_DASHBOARD_HOST", "127.0.0.1")

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import pathlib
 import tempfile
 
 import pytest
@@ -45,14 +46,20 @@ class TestRiskGuard:
     def test_buy_approved_with_stop(self, monkeypatch):
         monkeypatch.setattr("finance_vibe.bot.risk_guard.is_market_open", lambda: True)
         monkeypatch.setattr("finance_vibe.bot.risk_guard.is_late_entry_window", lambda: False)
-        guard = RiskGuard(risk_per_trade_pct=0.03, min_notional=50)
+        guard = RiskGuard(min_notional=50)
         snap = _snapshot("PLTR", setup="SETUP_LONG", stop=95.0)
         action = TradeAction("PLTR", "BUY", pct=20, stop=95.0, reason="setup")
-        risk = guard.validate(action, _ctx(), snap, open_position_count=0)
+        ctx = _ctx()
+        risk = guard.validate(action, ctx, snap, open_position_count=0)
         assert risk.approved
         assert risk.qty >= 1
         assert risk.qty == int(risk.qty)  # whole shares
         assert risk.notional >= 50
+        # Flat sizing: notional is deploy_pct of equity, capped by the rail,
+        # and no longer shrinks because the stop happens to be far away.
+        assert risk.notional == pytest.approx(
+            ctx.account_equity * guard.max_position_pct, rel=0.02,
+        )
 
     def test_buy_blocked_when_entries_blocked(self):
         guard = RiskGuard()
@@ -169,9 +176,7 @@ class TestOllamaAgent:
 
     def test_daily_active_quality_buy(self, monkeypatch):
         monkeypatch.setattr("finance_vibe.bot.ollama_agent.config.TRADING_MODE", "daily_active")
-        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.BUY_MODE", "quality")
-        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.REQUIRE_STRUCTURE", True)
-        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.ACTIVE_MIN_BUY_SCORE", 40)
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.MIN_BUY_SCORE", 40)
         agent = OllamaAgent(enabled=False)
         snap = _snapshot("PLTR", price=25.0, stop=24.0, setup="SETUP_LONG")
         snap.change_from_open_pct = -0.8
@@ -190,26 +195,32 @@ class TestOllamaAgent:
         assert buy.normalized_action() == "BUY"
         assert buy.stop is not None
 
-    def test_quality_rejects_freefall_without_structure(self, monkeypatch):
+    def test_rejects_knife_below_entry_band(self, monkeypatch):
+        """Down 4.5% off the open is outside the band, whatever the score."""
         from finance_vibe.bot.daily_activity import _buy_eligible
-        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.BUY_MODE", "quality")
-        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.REQUIRE_STRUCTURE", True)
-        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.MAX_DIP_BUY_PCT", -3.0)
+        monkeypatch.setattr(
+            "finance_vibe.bot.daily_activity.config.ENTRY_MIN_FROM_OPEN_PCT", -2.5,
+        )
         snap = _snapshot("SMCI", price=50.0, stop=48.0)
         snap.change_from_open_pct = -4.5
-        snap.setup_type = None
-        snap.conviction = 20
-        snap.vibe_score = 2
-        snap.active_score = 60
-        snap.rvol = 2.0
+        snap.active_score = 90
         assert not _buy_eligible(snap, _ctx(watchlist=[snap]), 0)
 
-    def test_quality_allows_strength_with_structure(self, monkeypatch):
+    def test_rejects_chase_above_entry_band(self, monkeypatch):
+        """Up 4.5% off the open has already happened — do not chase it."""
+        from finance_vibe.bot.daily_activity import _buy_eligible
+        monkeypatch.setattr(
+            "finance_vibe.bot.daily_activity.config.ENTRY_MAX_FROM_OPEN_PCT", 3.5,
+        )
+        snap = _snapshot("TSLA", price=200.0, stop=190.0, setup="SETUP_LONG")
+        snap.change_from_open_pct = 4.5
+        snap.price_vs_vwap_pct = 0.2
+        snap.active_score = 90
+        assert not _buy_eligible(snap, _ctx(watchlist=[snap]), 0)
+
+    def test_allows_constructive_strength(self, monkeypatch):
         from finance_vibe.bot.daily_activity import _buy_eligible, compute_active_score
-        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.BUY_MODE", "quality")
-        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.REQUIRE_STRUCTURE", True)
-        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.ALLOW_STRENGTH_BUYS", True)
-        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.ACTIVE_MIN_BUY_SCORE", 40)
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.MIN_BUY_SCORE", 40)
         snap = _snapshot("NVDA", price=100.0, stop=95.0, setup="SETUP_LONG")
         snap.change_from_open_pct = 0.8
         snap.price_vs_vwap_pct = 0.2
@@ -222,14 +233,10 @@ class TestOllamaAgent:
         assert snap.active_score >= 40
         assert _buy_eligible(snap, _ctx(watchlist=[snap]), 0)
 
-    def test_nvda_strength_a_setup_at_2_6_passes(self, monkeypatch):
+    def test_upper_band_edge_still_passes(self, monkeypatch):
+        """+2.6% is inside the band, so a strong name there is buyable."""
         from finance_vibe.bot.daily_activity import _buy_eligible, compute_active_score
-        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.BUY_MODE", "quality")
-        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.REQUIRE_STRUCTURE", True)
-        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.ALLOW_STRENGTH_BUYS", True)
-        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.STRENGTH_MAX_OPEN_PCT", 3.5)
-        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.ACTIVE_MIN_BUY_SCORE", 38)
-        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.ACTIVE_SETUP_MIN_BUY_SCORE", 30)
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.MIN_BUY_SCORE", 38)
         snap = _snapshot("NVDA", price=120.0, stop=115.0, setup="SETUP_LONG")
         snap.change_from_open_pct = 2.6
         snap.price_vs_vwap_pct = 0.05
@@ -242,42 +249,19 @@ class TestOllamaAgent:
         snap.active_score = compute_active_score(snap)
         assert _buy_eligible(snap, _ctx(watchlist=[snap]), 0)
 
-    def test_strength_no_setup_fails(self, monkeypatch):
+    def test_low_score_fails_inside_band(self, monkeypatch):
+        """The score floor is now the only quality gate, so it must bite."""
         from finance_vibe.bot.daily_activity import _buy_eligible
-        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.BUY_MODE", "quality")
-        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.REQUIRE_STRUCTURE", True)
-        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.ALLOW_STRENGTH_BUYS", True)
-        snap = _snapshot("TSLA", price=200.0, stop=190.0)
-        snap.setup_type = None
-        snap.coiled_cobra_grade = None
-        snap.change_from_open_pct = 3.0
-        snap.price_vs_vwap_pct = 0.5
-        snap.rvol = 2.0
-        snap.vibe_score = 8
-        snap.conviction = 60
-        snap.active_score = 80
-        snap.rsi = 50
-        assert not _buy_eligible(snap, _ctx(watchlist=[snap]), 0)
-
-    def test_strength_rvol_alone_fails(self, monkeypatch):
-        from finance_vibe.bot.daily_activity import _buy_eligible
-        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.BUY_MODE", "quality")
-        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.ALLOW_STRENGTH_BUYS", True)
-        snap = _snapshot("AMD", price=100.0, stop=95.0, setup="SETUP_LONG")
-        snap.change_from_open_pct = 2.5
-        snap.price_vs_vwap_pct = -0.5  # below VWAP
-        snap.orb_signal = None
-        snap.rvol = 3.0  # high RVOL alone must not unlock
-        snap.vibe_score = 8
-        snap.conviction = 60
-        snap.active_score = 90
-        snap.rsi = 50
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.MIN_BUY_SCORE", 38)
+        snap = _snapshot("AMD", price=100.0, stop=95.0)
+        snap.change_from_open_pct = 0.5
+        snap.price_vs_vwap_pct = 0.1
+        snap.active_score = 20.0
         assert not _buy_eligible(snap, _ctx(watchlist=[snap]), 0)
 
     def test_mild_pullback_setup_passes(self, monkeypatch):
         from finance_vibe.bot.daily_activity import _buy_eligible, compute_active_score
-        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.BUY_MODE", "quality")
-        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.ACTIVE_MIN_BUY_SCORE", 38)
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.MIN_BUY_SCORE", 38)
         snap = _snapshot("META", price=500.0, stop=490.0, setup="SETUP_LONG")
         snap.change_from_open_pct = -1.0
         snap.rvol = 1.1
@@ -318,8 +302,9 @@ class TestOllamaAgent:
 
     def test_daily_quick_sell(self, monkeypatch):
         from finance_vibe.bot.daily_activity import should_quick_sell
-        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.QUICK_PROFIT_PCT", 1.2)
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.ATR_EXIT_MULT", 0.5)
         snap = _snapshot("PLTR", price=100.0)
+        snap.atr = 2.0                       # 2% ATR -> 1.0% band
         snap.in_position = True
         snap.position_pnl_pct = 1.5
         ok, reason, pct = should_quick_sell(snap)
@@ -330,8 +315,7 @@ class TestOllamaAgent:
         from finance_vibe.bot.daily_activity import enforce_minimum_activity
         from finance_vibe.bot.models import AgentDecision
         monkeypatch.setattr("finance_vibe.bot.daily_activity.config.REQUIRE_DAILY_ACTIVITY", True)
-        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.BUY_MODE", "quality")
-        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.ACTIVE_MIN_BUY_SCORE", 40)
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.MIN_BUY_SCORE", 40)
         snap = _snapshot("SOFI", price=10.0, stop=9.5, setup="SETUP_LONG")
         snap.change_from_open_pct = -0.8
         snap.rsi = 40.0
@@ -376,6 +360,129 @@ class TestBotStore:
         tmp_db.save_daily_report(date(2026, 8, 30), 100_000, 101_000, 3, 10, False)
         reports = tmp_db.daily_reports(1)
         assert reports[0]["pnl"] == 1000
+
+
+class TestDecisionLogging:
+    """The eligibility log is the only record of why a trade did NOT happen."""
+
+    def _details(self):
+        return [
+            {
+                "ticker": "NVDA", "pass": True, "reject_reason": None,
+                "reasons": ["PASS"], "price": 100.0, "open_pct": 1.0,
+                "vwap_pct": 0.2, "quality_score": 55, "score_floor": 38,
+                "exit_band_pct": 1.4, "atr": 2.0, "setup": "SETUP_LONG",
+            },
+            {
+                "ticker": "AMD", "pass": False,
+                "reject_reason": "outside_entry_band_5.10",
+                "reasons": ["outside_entry_band_5.10"], "price": 50.0,
+                "open_pct": 5.1, "quality_score": 70, "score_floor": 38,
+                "exit_band_pct": 1.8,
+            },
+        ]
+
+    def test_saves_every_ticker_not_just_buys(self, tmp_db):
+        cid = tmp_db.start_cycle({})
+        assert tmp_db.save_eligibility(cid, self._details()) == 2
+
+        with tmp_db._conn() as conn:
+            rows = {
+                r["ticker"]: r for r in conn.execute(
+                    "SELECT * FROM eligibility WHERE cycle_id = ?", (cid,)
+                )
+            }
+        # The rejection is the valuable row: it carries the blocking gate.
+        assert rows["AMD"]["passed"] == 0
+        assert rows["AMD"]["reject_reason"] == "outside_entry_band_5.10"
+        assert rows["AMD"]["quality_score"] == 70
+        assert rows["NVDA"]["passed"] == 1
+
+    def test_empty_details_is_a_noop(self, tmp_db):
+        assert tmp_db.save_eligibility(tmp_db.start_cycle({}), []) == 0
+
+    def test_explain_returns_every_logged_field(self):
+        """save_eligibility reads these keys; guard against silent renames."""
+        from finance_vibe.bot.daily_activity import explain_buy_eligibility
+        snap = _snapshot("NVDA", price=100.0)
+        detail = explain_buy_eligibility(snap, _ctx(watchlist=[snap]), 0)
+        for key in (
+            "ticker", "pass", "reject_reason", "reasons", "price", "open_pct",
+            "vwap_pct", "quality_score", "score_floor", "exit_band_pct",
+            "rvol", "rsi", "atr", "setup", "cobra", "conviction",
+            "vibe_score", "rs_63d", "in_position", "position_count",
+            "day_pnl_pct", "qqq_from_open", "entries_blocked",
+        ):
+            assert key in detail, f"explain_buy_eligibility lost '{key}'"
+
+
+class TestTradeReconciliation:
+    """Round trips come from Alpaca fills, not our own order statuses."""
+
+    def _fill(self, oid, sym, side, qty, px, minute):
+        from datetime import datetime, timezone
+        return {
+            "id": oid, "symbol": sym, "side": side, "qty": qty, "price": px,
+            "filled_at": datetime(2026, 9, 3, 14, minute, tzinfo=timezone.utc),
+        }
+
+    def test_pairs_buy_with_sell(self, tmp_db):
+        res = tmp_db.reconcile_trades([
+            self._fill("b1", "NVDA", "BUY", 10, 100.0, 0),
+            self._fill("s1", "NVDA", "SELL", 10, 101.5, 30),
+        ])
+        assert res == {"opened": 1, "closed": 1}
+        with tmp_db._conn() as conn:
+            t = conn.execute("SELECT * FROM trades").fetchone()
+        assert t["status"] == "closed"
+        assert t["pnl_pct"] == pytest.approx(1.5)
+        assert t["pnl"] == pytest.approx(15.0)
+        assert t["hold_minutes"] == pytest.approx(30.0)
+
+    def test_is_idempotent(self, tmp_db):
+        """Runs every cycle, so replaying the same fills must not duplicate."""
+        fills = [
+            self._fill("b1", "NVDA", "BUY", 10, 100.0, 0),
+            self._fill("s1", "NVDA", "SELL", 10, 101.0, 20),
+        ]
+        tmp_db.reconcile_trades(fills)
+        assert tmp_db.reconcile_trades(fills) == {"opened": 0, "closed": 0}
+        with tmp_db._conn() as conn:
+            assert conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0] == 1
+
+    def test_open_position_stays_open(self, tmp_db):
+        tmp_db.reconcile_trades([self._fill("b1", "XOM", "BUY", 5, 60.0, 0)])
+        with tmp_db._conn() as conn:
+            t = conn.execute("SELECT * FROM trades").fetchone()
+        assert t["status"] == "open"
+        assert t["exit_price"] is None
+
+    def test_sell_without_a_known_entry_is_ignored(self, tmp_db):
+        """Positions opened before logging existed must not create fake trades."""
+        assert tmp_db.reconcile_trades([
+            self._fill("s9", "TSLA", "SELL", 3, 400.0, 5),
+        ]) == {"opened": 0, "closed": 0}
+
+    def test_annotate_attaches_entry_rationale(self, tmp_db):
+        cid = tmp_db.start_cycle({})
+        tmp_db.save_eligibility(cid, [{
+            "ticker": "NVDA", "pass": True, "reasons": ["PASS"],
+            "price": 100.0, "open_pct": 1.0, "vwap_pct": 0.2,
+            "quality_score": 55, "exit_band_pct": 1.4, "setup": "SETUP_LONG",
+        }])
+        # The rationale must predate the fill, which is how the live matching
+        # works: eligibility is logged, then the order fills.
+        from datetime import datetime, timedelta, timezone
+        tmp_db.reconcile_trades([{
+            "id": "b1", "symbol": "NVDA", "side": "BUY", "qty": 10,
+            "price": 100.0,
+            "filled_at": datetime.now(timezone.utc) + timedelta(minutes=1),
+        }])
+        assert tmp_db.annotate_trade_entries() == 1
+        with tmp_db._conn() as conn:
+            t = conn.execute("SELECT * FROM trades").fetchone()
+        assert t["entry_score"] == 55
+        assert "SETUP_LONG" in t["entry_reason"]
 
 
 class TestMarketHours:
@@ -880,7 +987,6 @@ class TestHealth:
 
     def test_day_loss_block_and_caution(self, monkeypatch):
         from finance_vibe.bot.risk_guard import RiskGuard
-        monkeypatch.setattr("finance_vibe.bot.risk_guard.config.DAY_CAUTION_PCT", -0.5)
         monkeypatch.setattr("finance_vibe.bot.risk_guard.config.DAY_BLOCK_BUYS_PCT", -1.0)
         monkeypatch.setattr("finance_vibe.bot.risk_guard.is_market_open", lambda: True)
         monkeypatch.setattr("finance_vibe.bot.risk_guard.is_late_entry_window", lambda: False)
@@ -1121,3 +1227,578 @@ class TestHealth:
         )
         monkeypatch.setattr("finance_vibe.bot.check_setup.run_health_check", lambda **k: fake)
         assert main(["--json"]) == 0
+
+
+class TestDeterministicExits:
+    """Exits are one ATR band either side, or the EOD flatten. Nothing else."""
+
+    def test_take_profit_fires(self, monkeypatch):
+        from finance_vibe.bot.daily_activity import should_quick_sell
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.ATR_EXIT_MULT", 0.5)
+        snap = _snapshot("PLTR", price=100.0)
+        snap.atr = 4.0                       # 4% ATR -> 2.0% band
+        snap.in_position = True
+        snap.position_pnl_pct = 2.1
+        ok, _, pct = should_quick_sell(snap)
+        assert ok and pct == 100.0
+
+    def test_stop_loss_fires(self, monkeypatch):
+        from finance_vibe.bot.daily_activity import should_quick_sell
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.ATR_EXIT_MULT", 0.5)
+        snap = _snapshot("PLTR", price=100.0)
+        snap.atr = 4.0
+        snap.in_position = True
+        snap.position_pnl_pct = -2.1
+        ok, _, _ = should_quick_sell(snap)
+        assert ok
+
+    def test_band_scales_with_volatility(self, monkeypatch):
+        """The whole point: a quiet name gets a tight band, a loud one gets a wide one."""
+        from finance_vibe.bot.daily_activity import exit_band_pct, should_quick_sell
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.ATR_EXIT_MULT", 0.5)
+
+        quiet = _snapshot("GLD", price=100.0)
+        quiet.atr = 2.0                      # 2% ATR -> 1.0% band
+        loud = _snapshot("COIN", price=100.0)
+        loud.atr = 6.8                       # 6.8% ATR -> 3.4% band
+
+        assert exit_band_pct(quiet) == 1.0
+        assert exit_band_pct(loud) == 3.4
+
+        for snap in (quiet, loud):
+            snap.in_position = True
+            snap.position_pnl_pct = 1.5
+        assert should_quick_sell(quiet)[0], "quiet name should have taken profit"
+        assert not should_quick_sell(loud)[0], "loud name has further to run"
+
+    def test_band_is_clamped(self, monkeypatch):
+        from finance_vibe.bot.daily_activity import exit_band_pct
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.ATR_EXIT_MULT", 0.5)
+        dead = _snapshot("BND", price=100.0)
+        dead.atr = 0.2                       # would be 0.1% -> floored at 0.6
+        wild = _snapshot("MEME", price=100.0)
+        wild.atr = 40.0                      # would be 20% -> capped at 4.0
+        assert exit_band_pct(dead) == 0.6
+        assert exit_band_pct(wild) == 4.0
+
+    def test_no_discretionary_exit(self, monkeypatch):
+        """Hot RSI, far above VWAP, past target1, big gain off the open — all hold."""
+        from finance_vibe.bot.daily_activity import should_quick_sell
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.ATR_EXIT_MULT", 0.5)
+        snap = _snapshot("PLTR", price=120.0)
+        snap.atr = 4.8                       # 4% ATR -> 2.0% band
+        snap.in_position = True
+        snap.position_pnl_pct = 0.9          # short of the band
+        snap.rsi = 79.0
+        snap.price_vs_vwap_pct = 1.4
+        snap.change_from_open_pct = 3.1
+        snap.target1 = 110.0                 # price is already past it
+        ok, reason, _ = should_quick_sell(snap)
+        assert not ok, f"unexpected discretionary exit: {reason}"
+
+    def test_llm_cannot_change_any_trade(self, monkeypatch):
+        """The LLM has no trade authority at all: only its summary survives.
+
+        Shuffling gate-passing candidates scored +2.47% against +2.00% for
+        score-ranked over the stored cycles, so reordering — the most the LLM
+        could ever do — has no measurable value.
+        """
+        from finance_vibe.bot.daily_activity import (
+            build_daily_decision,
+            merge_llm_with_daily,
+        )
+        from finance_vibe.bot.models import AgentDecision
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.ATR_EXIT_MULT", 0.5)
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.REQUIRE_DAILY_ACTIVITY", False)
+
+        held = _snapshot("PLTR", price=100.0)
+        held.atr = 4.0
+        held.in_position = True
+        held.position_pnl_pct = 0.4          # inside the band, so HOLD
+        candidate = _snapshot("NVDA", price=100.0, stop=95.0, setup="SETUP_LONG")
+        candidate.change_from_open_pct = 0.5
+        candidate.active_score = 5.0         # below the floor, so no buy
+        ctx = _ctx(watchlist=[held, candidate])
+
+        llm = AgentDecision(
+            actions=[
+                TradeAction("PLTR", "SELL", 100.0, reason="looks toppy"),
+                TradeAction("NVDA", "BUY", 25.0, stop=95.0, reason="feeling lucky"),
+            ],
+            summary="llm wants out of PLTR and into NVDA",
+        )
+        out = merge_llm_with_daily(llm, ctx)
+
+        rules = {a.ticker: a.normalized_action() for a in build_daily_decision(ctx).actions}
+        got = {a.ticker: a.normalized_action() for a in out.actions}
+        assert got == rules, "LLM changed a trade decision"
+        assert got["PLTR"] == "HOLD"
+        assert got["NVDA"] == "HOLD"
+        assert out.summary == "llm wants out of PLTR and into NVDA"
+
+    def test_no_forced_rotation_sell(self, monkeypatch):
+        """Idle cycle with no quality buy must not dump a winner."""
+        from finance_vibe.bot.daily_activity import enforce_minimum_activity
+        from finance_vibe.bot.models import AgentDecision
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.REQUIRE_DAILY_ACTIVITY", True)
+        snap = _snapshot("PLTR")
+        snap.in_position = True
+        snap.position_pnl_pct = 0.3
+        snap.active_score = 5.0              # nothing worth buying
+        ctx = _ctx(watchlist=[snap])
+        ctx.open_positions = [{"symbol": "PLTR"}]
+        idle = AgentDecision(actions=[TradeAction("PLTR", "HOLD")], summary="idle")
+        out = enforce_minimum_activity(idle, ctx)
+        assert not any(a.normalized_action() == "SELL" for a in out.actions)
+
+
+class TestFlatSizing:
+    def test_flat_size_regardless_of_score(self, monkeypatch):
+        from finance_vibe.bot.daily_activity import _position_pct
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.ACTIVE_POSITION_PCT", 13.0)
+        for score in (20.0, 55.0, 70.0, 95.0):
+            snap = _snapshot("PLTR")
+            snap.active_score = score
+            assert _position_pct(snap, regime_ok=True) == 13.0
+
+    def test_weak_regime_still_reduces(self, monkeypatch):
+        from finance_vibe.bot.daily_activity import _position_pct
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.ACTIVE_POSITION_PCT", 13.0)
+        snap = _snapshot("PLTR")
+        snap.active_score = 90.0
+        assert _position_pct(snap, regime_ok=False) == pytest.approx(9.75)
+
+
+class TestVwapCeiling:
+    def _base(self, monkeypatch):
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.VWAP_BUY_MAX_ABOVE_PCT", 1.0)
+        monkeypatch.setattr("finance_vibe.bot.daily_activity.config.MIN_BUY_SCORE", 38)
+        snap = _snapshot("SOFI", price=10.0, stop=9.5, setup="SETUP_LONG")
+        snap.change_from_open_pct = -0.3
+        snap.rsi = 45.0
+        snap.tight_stop = 9.85
+        snap.active_score = 60.0
+        snap.conviction = 50.0
+        snap.vibe_score = 7
+        snap.rvol = 1.1
+        return snap
+
+    def test_extended_entry_rejected(self, monkeypatch):
+        from finance_vibe.bot.daily_activity import _buy_eligible
+        snap = self._base(monkeypatch)
+        snap.price_vs_vwap_pct = 1.8
+        assert not _buy_eligible(snap, _ctx(watchlist=[snap]), 0)
+
+    def test_extended_entry_reason_logged(self, monkeypatch):
+        from finance_vibe.bot.daily_activity import explain_buy_eligibility
+        snap = self._base(monkeypatch)
+        snap.price_vs_vwap_pct = 1.8
+        info = explain_buy_eligibility(snap, _ctx(watchlist=[snap]), 0)
+        assert any("extended_vs_vwap" in r for r in info["reasons"])
+
+    def test_normal_entry_not_blocked_by_ceiling(self, monkeypatch):
+        """A name just above VWAP must not trip the anti-chase gate."""
+        from finance_vibe.bot.daily_activity import explain_buy_eligibility
+        snap = self._base(monkeypatch)
+        snap.price_vs_vwap_pct = 0.4
+        info = explain_buy_eligibility(snap, _ctx(watchlist=[snap]), 0)
+        assert not any("extended_vs_vwap" in r for r in info["reasons"])
+
+    def test_missing_vwap_does_not_block(self, monkeypatch):
+        from finance_vibe.bot.daily_activity import explain_buy_eligibility
+        snap = self._base(monkeypatch)
+        snap.price_vs_vwap_pct = None
+        info = explain_buy_eligibility(snap, _ctx(watchlist=[snap]), 0)
+        assert not any("extended_vs_vwap" in r for r in info["reasons"])
+
+
+class TestFrozenConfig:
+    """Guards the two-week run: a stray edit fails here instead of mid-session."""
+
+    def test_frozen_values(self):
+        from finance_vibe.bot import config
+        # The nine knobs, frozen for the run.
+        assert config.ATR_EXIT_MULT == 0.5
+        assert config.MIN_BUY_SCORE == 38.0
+        assert config.ENTRY_MIN_FROM_OPEN_PCT == -2.5
+        assert config.ENTRY_MAX_FROM_OPEN_PCT == 3.5
+        assert config.VWAP_BUY_MAX_ABOVE_PCT == 1.0
+        assert config.ACTIVE_POSITION_PCT == 13.0
+        assert config.MAX_POSITIONS == 5
+        assert config.DAY_BLOCK_BUYS_PCT == -1.0
+        assert config.BENCHMARK_BLOCK_PCT == -0.4
+        # Structural, not tuning.
+        assert config.CYCLE_MINUTES == 20
+        assert config.ACTIVE_MAX_BUYS_PER_CYCLE == 2
+        assert config.EOD_FLAT_HOUR == 15
+        assert config.EOD_FLAT_MINUTE == 55
+        assert config.USE_BROKER_STOPS is False
+
+    def test_dead_tickers_removed(self):
+        from finance_vibe.bot import config
+        assert "IWM" not in config.WATCHLIST
+        assert "JPM" not in config.WATCHLIST
+        assert len(config.WATCHLIST) == 14
+
+    def test_removed_knobs_stay_removed(self):
+        """Each of these was noise-fitted to four days. Do not bring them back."""
+        from finance_vibe.bot import config
+        for name in (
+            "ACTIVE_SELL_RSI", "ACTIVE_SELL_FROM_OPEN_PCT",
+            "QUICK_PROFIT_PCT", "QUICK_STOP_LOSS_PCT",
+            "ACTIVE_STOP_PCT", "ACTIVE_ATR_MULT",
+            "ACTIVE_MIN_RSI", "ACTIVE_MAX_RSI",
+            "MIN_RVOL", "MIN_RVOL_HARD_FLOOR",
+            "MIN_BUY_CONVICTION", "MIN_BUY_VIBE", "ACTIVE_SETUP_MIN_BUY_SCORE",
+            "ACTIVE_MIN_BUY_SCORE",
+            "STRENGTH_MAX_OPEN_PCT", "PULLBACK_MAX_OPEN_PCT",
+            "MAX_DIP_BUY_PCT", "DIP_BUY_FROM_OPEN_PCT",
+            "VWAP_BUY_BELOW_PCT", "ORB_MINUTES", "IBS_OVERSOLD",
+            "MAX_POSITION_PCT", "RISK_PER_TRADE_PCT", "DAY_CAUTION_PCT",
+            "BUY_MODE", "REQUIRE_STRUCTURE", "ALLOW_STRENGTH_BUYS",
+        ):
+            assert not hasattr(config, name), f"{name} came back"
+
+    def test_strategy_knob_count(self):
+        """A hard ceiling on tunable parameters — the actual overfitting fix."""
+        from finance_vibe.bot import config
+        knobs = {
+            "ATR_EXIT_MULT", "MIN_BUY_SCORE",
+            "ENTRY_MIN_FROM_OPEN_PCT", "ENTRY_MAX_FROM_OPEN_PCT",
+            "VWAP_BUY_MAX_ABOVE_PCT", "ACTIVE_POSITION_PCT",
+            "MAX_POSITIONS", "DAY_BLOCK_BUYS_PCT", "BENCHMARK_BLOCK_PCT",
+        }
+        assert len(knobs) == 9
+        for name in knobs:
+            assert hasattr(config, name), f"{name} is missing"
+
+
+class TestRunnerAlive:
+    def test_stale_heartbeat_flagged(self, monkeypatch):
+        from datetime import datetime, timedelta, timezone
+        from finance_vibe.bot import dashboard
+        monkeypatch.setattr(dashboard, "is_market_open", lambda: True)
+        old = (datetime.now(timezone.utc) - timedelta(minutes=95)).isoformat()
+        out = dashboard._runner_alive({"last_heartbeat": old})
+        assert out["state"] == "stale"
+
+    def test_fresh_heartbeat_alive(self, monkeypatch):
+        from datetime import datetime, timedelta, timezone
+        from finance_vibe.bot import dashboard
+        monkeypatch.setattr(dashboard, "is_market_open", lambda: True)
+        fresh = (datetime.now(timezone.utc) - timedelta(minutes=3)).isoformat()
+        out = dashboard._runner_alive({"last_heartbeat": fresh})
+        assert out["state"] == "alive"
+
+    def test_no_heartbeat(self, monkeypatch):
+        from finance_vibe.bot import dashboard
+        monkeypatch.setattr(dashboard, "is_market_open", lambda: True)
+        assert dashboard._runner_alive({})["state"] == "off"
+
+
+# Child script for the lock tests. A lock only means anything between separate
+# processes, so these spawn real ones rather than faking the cross-process part.
+_HOLDER_SRC = """
+import sys, time
+from pathlib import Path
+sys.path.insert(0, {src!r})
+from finance_vibe.bot import config
+config.BOT_DATA_DIR = Path(sys.argv[1])
+from finance_vibe.bot.session import acquire_runner_lock, write_runner_pid
+if acquire_runner_lock() is None:
+    print("REFUSED", flush=True)
+    raise SystemExit(3)
+write_runner_pid()
+print("HELD", flush=True)
+time.sleep(float(sys.argv[2]))
+"""
+
+
+class TestRunnerLock:
+    """The Day 5 duplicate-runner bug: os.kill(pid, 0) is not a liveness probe
+    on Windows, so every guard asking "is a runner alive?" answered no, and
+    the watchdog kept launching runners on top of a healthy one."""
+
+    @staticmethod
+    def _spawn(tmp_path, hold_sec: float = 30.0):
+        import subprocess
+        import sys
+        src = str(pathlib.Path(__file__).resolve().parents[1] / "src")
+        return subprocess.Popen(
+            [sys.executable, "-c", _HOLDER_SRC.format(src=src),
+             str(tmp_path), str(hold_sec)],
+            stdout=subprocess.PIPE, text=True,
+        )
+
+    def test_lock_is_held_while_a_runner_runs(self, tmp_path, monkeypatch):
+        from finance_vibe.bot import config, session
+        monkeypatch.setattr(config, "BOT_DATA_DIR", tmp_path)
+
+        assert session.runner_is_alive() is False
+        proc = self._spawn(tmp_path)
+        try:
+            assert proc.stdout.readline().strip() == "HELD"
+            assert session.runner_is_alive() is True
+            # The reported PID is the runner's own, read from the file it
+            # wrote. proc.pid is not usable here: on Windows the venv
+            # launcher re-execs, so the child we see is not the interpreter.
+            written = int((tmp_path / "runner.pid").read_text(encoding="utf-8"))
+            assert written != os.getpid()
+            assert session.read_alive_runner_pid() == written
+        finally:
+            proc.kill()
+            proc.wait(timeout=10)
+
+    def test_second_runner_is_refused(self, tmp_path, monkeypatch):
+        from finance_vibe.bot import config
+        monkeypatch.setattr(config, "BOT_DATA_DIR", tmp_path)
+
+        first = self._spawn(tmp_path)
+        try:
+            assert first.stdout.readline().strip() == "HELD"
+            second = self._spawn(tmp_path)
+            assert second.stdout.readline().strip() == "REFUSED"
+            assert second.wait(timeout=10) == 3
+        finally:
+            first.kill()
+            first.wait(timeout=10)
+
+    def test_clean_exit_frees_the_lock(self, tmp_path, monkeypatch):
+        from finance_vibe.bot import config, session
+        monkeypatch.setattr(config, "BOT_DATA_DIR", tmp_path)
+
+        proc = self._spawn(tmp_path, hold_sec=0.1)
+        assert proc.stdout.readline().strip() == "HELD"
+        proc.wait(timeout=15)
+        assert session.runner_is_alive() is False
+
+    def test_hard_kill_frees_the_lock(self, tmp_path, monkeypatch):
+        """The unattended case: a crashed runner must look dead so the watchdog
+        restarts it, and its leftover runner.pid must not confuse that."""
+        from finance_vibe.bot import config, session
+        monkeypatch.setattr(config, "BOT_DATA_DIR", tmp_path)
+
+        proc = self._spawn(tmp_path)
+        assert proc.stdout.readline().strip() == "HELD"
+        proc.kill()
+        proc.wait(timeout=10)
+
+        assert (tmp_path / "runner.pid").exists()
+        assert session.runner_is_alive() is False
+        assert session.read_alive_runner_pid() is None
+
+    def test_holder_does_not_see_itself_as_another_runner(self, tmp_path, monkeypatch):
+        from finance_vibe.bot import config, session
+        monkeypatch.setattr(config, "BOT_DATA_DIR", tmp_path)
+        try:
+            assert session.acquire_runner_lock() is not None
+            assert session.runner_is_alive() is False
+            assert session.read_alive_runner_pid() is None
+        finally:
+            session.release_runner_lock()
+
+    def test_runner_alive_exit_codes(self, monkeypatch, capsys):
+        """start-paper-bot.ps1 refuses to launch on exit 3, so these codes are
+        a contract: getting them wrong either starts a second runner or blocks
+        the bot for a whole unattended day.
+
+        3 rather than 1 matters, because Python exits 1 on an unhandled
+        exception and a crashed check must not look like a running runner.
+        """
+        from finance_vibe.bot import runner as runner_mod
+
+        monkeypatch.setattr(runner_mod, "read_alive_runner_pid", lambda: None)
+        assert runner_mod.main(["runner-alive"]) == 0
+        assert json.loads(capsys.readouterr().out)["alive"] is False
+
+        monkeypatch.setattr(runner_mod, "read_alive_runner_pid", lambda: 4242)
+        assert runner_mod.main(["runner-alive"]) == 3
+        out = json.loads(capsys.readouterr().out)
+        assert out["alive"] is True and out["pid"] == 4242
+
+    def test_launcher_only_refuses_on_the_alive_code(self):
+        """A crashed check exits 1; the launcher must not read that as alive."""
+        launcher = (
+            pathlib.Path(__file__).resolve().parents[1] / "start-paper-bot.ps1"
+        ).read_text(encoding="utf-8")
+        assert "$aliveCode -eq 3" in launcher
+        assert "$aliveCode -ne 0" in launcher
+
+    def test_alive_with_no_pid_file_still_reports_alive(self, tmp_path, monkeypatch):
+        """Liveness comes from the lock, so a missing PID file cannot mask it."""
+        from finance_vibe.bot import config, session
+        monkeypatch.setattr(config, "BOT_DATA_DIR", tmp_path)
+
+        proc = self._spawn(tmp_path)
+        try:
+            assert proc.stdout.readline().strip() == "HELD"
+            (tmp_path / "runner.pid").unlink()
+            assert session.read_alive_runner_pid() == -1
+        finally:
+            proc.kill()
+            proc.wait(timeout=10)
+
+
+class TestResumeKeepsFreshOrders:
+    """Resume used to cancel buy limits seconds after they were placed, which
+    is how COIN never filled and SOFI filled 325 of 708 shares on Day 5."""
+
+    @staticmethod
+    def _client(orders):
+        """A real AlpacaClient with only the broker calls stubbed, so the
+        age-filtering logic under test is the production code path."""
+        from finance_vibe.bot.alpaca_client import AlpacaClient
+
+        class _Stub(AlpacaClient):
+            def __init__(self):
+                self.cancelled: list[str] = []
+                self._orders = list(orders)
+
+                class _Trading:
+                    def cancel_order_by_id(_self, order_id):
+                        self.cancelled.append(order_id)
+                        self._orders = [
+                            o for o in self._orders if o["id"] != order_id
+                        ]
+
+                self._trading = _Trading()
+
+            def _ensure_clients(self):
+                pass
+
+            def get_open_orders(self, symbol=None):
+                return list(self._orders)
+
+        return _Stub()
+
+    @staticmethod
+    def _order(order_id, age_sec, side="BUY", otype="limit"):
+        from datetime import datetime, timedelta, timezone
+        return {
+            "id": order_id,
+            "symbol": order_id,
+            "side": side,
+            "type": otype,
+            "submitted_at": datetime.now(timezone.utc) - timedelta(seconds=age_sec),
+        }
+
+    def _cancelled(self, orders, **kwargs):
+        client = self._client(orders)
+        client.cancel_stale_non_sell_orders(**kwargs)
+        return client.cancelled
+
+    def test_fresh_buy_survives_resume(self):
+        assert self._cancelled(
+            [self._order("FRESH", age_sec=30)], min_age_sec=600,
+        ) == []
+
+    def test_old_buy_is_still_cancelled(self):
+        assert self._cancelled(
+            [self._order("OLD", age_sec=3600)], min_age_sec=600,
+        ) == ["OLD"]
+
+    def test_default_cancels_everything(self):
+        """The 3:30 PM cleanup keeps its old behaviour."""
+        assert self._cancelled([self._order("FRESH", age_sec=5)]) == ["FRESH"]
+
+    def test_working_sell_is_never_cancelled(self):
+        assert self._cancelled(
+            [self._order("SELLING", age_sec=3600, side="SELL")], min_age_sec=600,
+        ) == []
+
+    def test_missing_submitted_at_is_treated_as_old(self):
+        """Unknown age must not become a way to keep stale orders forever."""
+        assert self._cancelled(
+            [{"id": "NOAGE", "symbol": "NOAGE", "side": "BUY", "type": "limit"}],
+            min_age_sec=600,
+        ) == ["NOAGE"]
+
+    def test_string_timestamps_parse(self):
+        from datetime import datetime, timedelta, timezone
+        iso = (datetime.now(timezone.utc) - timedelta(seconds=20)).isoformat()
+        assert self._cancelled(
+            [{"id": "S", "symbol": "S", "side": "BUY", "type": "limit",
+              "submitted_at": iso}],
+            min_age_sec=600,
+        ) == []
+
+    def test_resume_passes_the_age_filter(self):
+        """Guard the wiring, not just the helper."""
+        import inspect
+        from finance_vibe.bot import session
+        src = inspect.getsource(session.prepare_clean_session)
+        assert "min_age_sec=RESUME_MIN_ORDER_AGE_SEC" in src
+        assert session.RESUME_MIN_ORDER_AGE_SEC == 600.0
+
+
+class TestLogClarity:
+    @staticmethod
+    def _held(pnl_pct: float):
+        snap = _snapshot("HOOD")
+        snap.in_position = True
+        snap.position_pnl_pct = pnl_pct
+        return snap
+
+    def test_held_position_reports_exit_state_not_buy_reason(self):
+        from finance_vibe.bot.daily_activity import hold_reason
+        out = hold_reason(self._held(2.72))
+        assert "no quality setup" not in out
+        assert "holding +2.72%" in out
+        assert "to target" in out and "to stop" in out
+
+    def test_flat_ticker_still_reports_the_buy_reason(self):
+        from finance_vibe.bot.daily_activity import hold_reason
+        assert hold_reason(_snapshot("AAPL")) == "no quality setup"
+
+    def test_distances_point_the_right_way(self):
+        from finance_vibe.bot.daily_activity import exit_band_pct, hold_reason
+        snap = self._held(1.0)
+        band = exit_band_pct(snap)
+        out = hold_reason(snap)
+        assert f"{band - 1.0:+.2f}% to target" in out
+        assert f"{-band - 1.0:+.2f}% to stop" in out
+
+    def test_held_position_decision_uses_exit_wording(self):
+        """The end-to-end path, since that is what gets logged."""
+        from finance_vibe.bot.daily_activity import build_daily_decision
+        snap = self._held(0.5)
+        decision = build_daily_decision(_ctx(watchlist=[snap]))
+        reason = decision.actions[0].reason
+        assert "holding +0.50%" in reason
+
+    def test_order_status_enum_is_normalized(self, tmp_path):
+        from finance_vibe.bot.store import BotStore
+        store = BotStore(db_path=str(tmp_path / "t.db"))
+        cid = store.start_cycle({})
+
+        class FakeEnum:
+            def __str__(self):
+                return "OrderStatus.PENDING_NEW"
+
+        oid = store.save_order(cid, "NVDA", "BUY", 10, "abc", FakeEnum())
+
+        def status_of():
+            with store._conn() as conn:
+                return conn.execute(
+                    "SELECT status FROM orders WHERE id = ?", (oid,)
+                ).fetchone()["status"]
+
+        assert status_of() == "pending_new"
+        store.update_order_status(oid, FakeEnum())
+        assert status_of() == "pending_new"
+
+    def test_error_statuses_are_stored_verbatim(self, tmp_path):
+        """This column also carries error text, which must not get mangled."""
+        from finance_vibe.bot.store import BotStore
+        store = BotStore(db_path=str(tmp_path / "t.db"))
+        cid = store.start_cycle({})
+        oid = store.save_order(
+            cid, "NVDA", "BUY", 10, None, "error:Connection Refused By Broker",
+        )
+        with store._conn() as conn:
+            row = conn.execute(
+                "SELECT status FROM orders WHERE id = ?", (oid,)
+            ).fetchone()
+        assert row["status"] == "error:Connection Refused By Broker"
+
+

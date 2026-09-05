@@ -6,7 +6,8 @@ param(
     [switch]$NoRunner,
     [switch]$NoBrowser,
     [switch]$SkipPrepare,
-    [switch]$Resume
+    [switch]$Resume,
+    [switch]$NoWatchdog
 )
 
 $ErrorActionPreference = "Continue"
@@ -33,22 +34,30 @@ $Python = $VenvPython
 $Check = Join-Path $Root "src\finance_vibe\bot\check_setup.py"
 $Dashboard = Join-Path $Root "src\finance_vibe\bot\dashboard.py"
 $Runner = Join-Path $Root "src\finance_vibe\bot\runner.py"
-$PidFile = Join-Path $Root "data\bot\runner.pid"
 
-if (Test-Path $PidFile) {
-    $oldPid = 0
-    try { $oldPid = [int]((Get-Content $PidFile -ErrorAction Stop | Select-Object -First 1).Trim()) } catch { $oldPid = 0 }
-    if ($oldPid -gt 0) {
-        $alive = Get-Process -Id $oldPid -ErrorAction SilentlyContinue
-        if ($alive) {
-            Write-Host ""
-            Write-Host "ERROR: Runner already running (pid $oldPid)." -ForegroundColor Red
-            Write-Host "Do not start twice - that would flatten live positions." -ForegroundColor Yellow
-            Write-Host "Close the 'FV Bot - Runner' window, or crash-only: .\start-paper-bot.ps1 -Resume" -ForegroundColor Yellow
-            Write-Host ""
-            exit 1
-        }
-    }
+# Ask the runner's own lock, not the PID file. A crashed runner leaves its
+# runner.pid behind, and Get-Process on a recycled PID would match some
+# unrelated process and refuse to start the bot for the whole day.
+# 3 = alive, 0 = free, anything else = the check itself failed.
+& $Python $Runner runner-alive | Out-Null
+$aliveCode = $LASTEXITCODE
+if ($aliveCode -eq 3) {
+    Write-Host ""
+    Write-Host "ERROR: Runner already running." -ForegroundColor Red
+    Write-Host "Do not start twice - that would flatten live positions." -ForegroundColor Yellow
+    Write-Host "Close the 'FV Bot - Runner' window, or crash-only: .\start-paper-bot.ps1 -Resume" -ForegroundColor Yellow
+    Write-Host ""
+    exit 1
+}
+elseif ($aliveCode -ne 0) {
+    # Inconclusive, so do not treat it as "already running" - that would block
+    # the whole trading day. Carry on: prepare-session refuses to flatten while
+    # a runner is alive, and the daemon holds an exclusive lock, so a real
+    # duplicate is still caught downstream.
+    Write-Host ""
+    Write-Host "WARNING: could not check for a running runner (exit $aliveCode)." -ForegroundColor Yellow
+    Write-Host "Continuing - prepare-session and the daemon lock will still catch a duplicate." -ForegroundColor DarkGray
+    Write-Host ""
 }
 
 function Start-BotWindow {
@@ -110,12 +119,22 @@ if (-not $NoRunner) {
         Write-Host ""
     }
     Start-BotWindow -Title "FV Bot - Runner" -Script $Runner -ScriptArgs @("daemon")
+
+    if (-not $NoWatchdog) {
+        Start-Sleep -Seconds 3
+        $wd = Join-Path $Root "scripts\watchdog.ps1"
+        $wdCmd = "Set-Location '$Root'; `$Host.UI.RawUI.WindowTitle = 'FV Bot - Watchdog'; & powershell -NoProfile -ExecutionPolicy Bypass -File '$wd'"
+        Start-Process powershell -ArgumentList @("-NoExit", "-Command", $wdCmd)
+    }
 }
 
 Write-Host "Started:" -ForegroundColor Green
 Write-Host "  [1] Dashboard  ->  http://127.0.0.1:5001"
 if (-not $NoRunner) {
     Write-Host "  [2] Runner     ->  trades every 20 min (market hours)"
+    if (-not $NoWatchdog) {
+        Write-Host "  [3] Watchdog   ->  resumes the runner if it dies"
+    }
 }
 Write-Host ""
 Write-Host "Close those windows to stop the bot." -ForegroundColor DarkGray

@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 import time
 from pathlib import Path
+from typing import IO
 
 from finance_vibe.bot import config
 from finance_vibe.bot.alpaca_client import AlpacaClient
@@ -13,27 +15,136 @@ from finance_vibe.bot.store import BotStore
 
 logger = logging.getLogger(__name__)
 
+# A resume leaves buy orders younger than this alone: they are probably still
+# working, and cancelling them is what broke the COIN/SOFI entries on Day 5.
+RESUME_MIN_ORDER_AGE_SEC = 600.0
+
 
 def runner_pid_path() -> Path:
     return config.BOT_DATA_DIR / "runner.pid"
 
 
-def read_alive_runner_pid() -> int | None:
-    """PID of a live runner, or None if the lock is stale/missing."""
-    path = runner_pid_path()
-    if not path.exists():
+def runner_lock_path() -> Path:
+    """Lock file kept separate from runner.pid.
+
+    The lock is a byte-range lock held for the daemon's whole life; reading the
+    PID for display must never contend with it, so they are different files.
+    """
+    return config.BOT_DATA_DIR / "runner.lock"
+
+
+# Handle for the lock this process holds, if any.
+_lock_handle: IO[str] | None = None
+
+
+def _try_lock(handle: IO[str]) -> bool:
+    """Take a non-blocking exclusive lock. False means someone else holds it."""
+    try:
+        if sys.platform == "win32":
+            import msvcrt
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except OSError:
+        return False
+
+
+def _unlock(handle: IO[str]) -> None:
+    try:
+        if sys.platform == "win32":
+            import msvcrt
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        pass
+
+
+def acquire_runner_lock() -> IO[str] | None:
+    """Take the single-runner lock, or None if another runner already holds it.
+
+    This is an atomic acquire rather than a check followed by a claim, so two
+    daemons starting at the same moment cannot both win.
+
+    The OS drops the lock when the holding process dies, including a hard kill,
+    so there is no stale-lock state to clean up. That is the whole reason this
+    replaced a PID check: os.kill(pid, 0) is not a liveness probe on Windows
+    (CPython routes os.kill through TerminateProcess), so it raised WinError 87
+    for every live PID and every duplicate-runner guard silently passed.
+    """
+    global _lock_handle
+    if _lock_handle is not None:
+        return _lock_handle
+    config.ensure_dirs()
+    path = runner_lock_path()
+    try:
+        handle = open(path, "a+", encoding="utf-8")
+    except OSError as exc:
+        logger.error("Cannot open runner lock %s: %s", path, exc)
         return None
+    if not _try_lock(handle):
+        handle.close()
+        return None
+    _lock_handle = handle
+    return handle
+
+
+def release_runner_lock() -> None:
+    global _lock_handle
+    if _lock_handle is None:
+        return
+    _unlock(_lock_handle)
+    try:
+        _lock_handle.close()
+    except OSError:
+        pass
+    _lock_handle = None
+
+
+def runner_is_alive() -> bool:
+    """True when some other process holds the runner lock."""
+    if _lock_handle is not None:
+        # This process is the runner; it is not "another" runner.
+        return False
+    path = runner_lock_path()
+    try:
+        handle = open(path, "a+", encoding="utf-8")
+    except OSError:
+        return False
+    try:
+        if _try_lock(handle):
+            _unlock(handle)
+            return False
+        return True
+    finally:
+        try:
+            handle.close()
+        except OSError:
+            pass
+
+
+def read_alive_runner_pid() -> int | None:
+    """PID of a live runner, or None when no other runner is running.
+
+    Liveness comes from the lock; the PID file is only for a readable message.
+    """
+    if not runner_is_alive():
+        return None
+    path = runner_pid_path()
     try:
         pid = int(path.read_text(encoding="utf-8").strip())
     except (ValueError, OSError):
-        return None
+        return -1  # alive, but PID unknown
     if pid <= 0 or pid == os.getpid():
-        return None
-    try:
-        os.kill(pid, 0)
-        return pid
-    except (OSError, ProcessLookupError):
-        return None
+        return -1
+    return pid
 
 
 def write_runner_pid() -> Path:
@@ -89,8 +200,9 @@ def prepare_clean_session(
     if flatten:
         live = read_alive_runner_pid()
         if live is not None:
+            where = f" (pid {live})" if live > 0 else ""
             msg = (
-                f"Runner already running (pid {live}). "
+                f"Runner already running{where}. "
                 "Do not flatten — close that window, or use -Resume after it is stopped."
             )
             logger.error(msg)
@@ -118,8 +230,9 @@ def prepare_clean_session(
             report["orders_cancelled"] = len(open_before)
             logger.info("Cancelled %s open orders", len(open_before))
         else:
-            # Resume: never cancel a working SELL — only stale BUY/stops
-            n = alpaca.cancel_stale_non_sell_orders()
+            # Resume: never cancel a working SELL — only stale BUY/stops, and
+            # only ones old enough that they are clearly not still working.
+            n = alpaca.cancel_stale_non_sell_orders(min_age_sec=RESUME_MIN_ORDER_AGE_SEC)
             report["orders_cancelled"] = n
             logger.info("Resume cancelled %s stale BUY/stop order(s)", n)
     except Exception as exc:

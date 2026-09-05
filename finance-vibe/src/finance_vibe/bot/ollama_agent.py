@@ -74,42 +74,33 @@ EXAMPLE (illustrative):
 
 SYSTEM_PROMPT_DAILY_ACTIVE = """You are a daily-active trading engine. Output ONLY valid JSON. No markdown.
 
-GOAL: Buy QUALITY Finance-Vibe setups (structure/cobra/vibe/RS), not free-falling dips.
-Mild pullbacks OR constructive green with structure+VWAP/ORB are OK. Flat by EOD.
-Deterministic code re-checks every BUY — you cannot bypass risk/eligibility.
+GOAL: rank the best BUY candidates. Deterministic code re-checks every BUY and
+decides every exit — you cannot bypass it, so do not try to be clever.
 
 STRICT ALGORITHM (follow in order):
 
 STEP 1 — HALTS / EOD / DAY LOSS
-If account.halted=true OR account.entries_blocked=true: SELL or HOLD only. No new BUYs.
+If account.halted=true OR account.entries_blocked=true: HOLD everything. No new BUYs.
 
-STEP 2 — SELL (every in_position=true ticker)
-SELL 100% if ANY:
-  (a) position_pnl_pct >= {tp}
-  (b) change_from_open_pct >= {sell_open}
-  (c) rsi >= {sell_rsi}
-  (d) position_pnl_pct <= -{sl} (cut loss)
-Otherwise HOLD position.
+STEP 2 — POSITIONS (every in_position=true ticker)
+Always HOLD. You have no sell authority. Exits are code-only: +/- one ATR band
+({atr_mult}x daily ATR, so it differs per stock), otherwise flatten at EOD.
+Any SELL you emit is discarded. Do not propose one.
 
-STEP 3 — BUY QUALITY (only if not halted and entries_blocked=false)
+STEP 3 — BUY (only if not halted and entries_blocked=false)
 Max open positions: {max_pos}. Max {max_buys} new BUYs this cycle.
 Skip if: in_position, has_open_buy_order=true, or positions full.
 
 BUY-ELIGIBLE only if ALL true:
-  (1) QUALITY: setup_type is SETUP_LONG or PENDING_* OR coiled_cobra_grade has A/B
-      OR (vibe_score >= {min_vibe} AND conviction >= {min_conv})
-  (2) NOT FREEFALL: change_from_open_pct > {max_dip} (unless SETUP_LONG or cobra A)
-  (3) TIMING: either
-      (a) pullback: open% between {max_dip} and +{pullback_max}, OR
-      (b) strength: open% 0 to +{strength_max} AND (SETUP_LONG or cobra A/B)
-          AND (near/above VWAP or ORB_BREAKOUT_UP). PENDING alone only if open%<=+1.0.
-          RVOL alone is NOT enough for strength.
-  (4) active_score >= {min_score} (SETUP_LONG/cobra A may use floor {setup_score})
-  (5) stop/tight_stop is a number below price
+  (1) TIMING: change_from_open_pct between {open_min} and +{open_max}
+      (do not catch a knife, do not chase a move that already happened)
+  (2) NOT EXTENDED: price_vs_vwap_pct <= {vwap_max}
+  (3) QUALITY: active_score >= {min_score}
+  (4) stop/tight_stop is a number below price
 
 Prefer HIGHEST active_score then rs_63d. Spread across sectors.
-NEVER buy just because a stock is red or green. NEVER buy IBS/VWAP/RVOL alone without quality.
-- pct={pos_pct} default; pct={pos_mid} if active_score 55-69; pct={pos_hi} if active_score >= 70
+NEVER buy just because a stock is red or green.
+- pct={pos_pct} on every BUY. Flat sizing — never size up on a high score.
 - stop MUST use stop or tight_stop from watchlist. Never invent.
 
 STEP 4 — Prefer quality over activity. HOLD is OK when no setup.
@@ -124,24 +115,15 @@ RULES: One action per ticker. Never BUY without stop below price. Never BUY when
 
 def get_system_prompt() -> str:
     if config.TRADING_MODE == "daily_active":
-        pos = config.ACTIVE_POSITION_PCT
         return SYSTEM_PROMPT_DAILY_ACTIVE.format(
-            tp=config.QUICK_PROFIT_PCT,
-            sell_open=config.ACTIVE_SELL_FROM_OPEN_PCT,
-            sell_rsi=config.ACTIVE_SELL_RSI,
-            sl=config.QUICK_STOP_LOSS_PCT,
+            atr_mult=config.ATR_EXIT_MULT,
             max_pos=config.MAX_POSITIONS,
             max_buys=config.ACTIVE_MAX_BUYS_PER_CYCLE,
-            max_dip=config.MAX_DIP_BUY_PCT,
-            min_score=config.ACTIVE_MIN_BUY_SCORE,
-            setup_score=config.ACTIVE_SETUP_MIN_BUY_SCORE,
-            min_vibe=int(config.MIN_BUY_VIBE),
-            min_conv=int(config.MIN_BUY_CONVICTION),
-            strength_max=config.STRENGTH_MAX_OPEN_PCT,
-            pullback_max=config.PULLBACK_MAX_OPEN_PCT,
-            pos_pct=pos,
-            pos_mid=round(pos * 1.15, 1),
-            pos_hi=round(min(pos * 1.35, config.MAX_POSITION_PCT * 100), 1),
+            open_min=config.ENTRY_MIN_FROM_OPEN_PCT,
+            open_max=config.ENTRY_MAX_FROM_OPEN_PCT,
+            min_score=config.MIN_BUY_SCORE,
+            pos_pct=config.ACTIVE_POSITION_PCT,
+            vwap_max=config.VWAP_BUY_MAX_ABOVE_PCT,
         )
     return SYSTEM_PROMPT
 

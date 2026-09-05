@@ -16,13 +16,18 @@ import json
 import logging
 import sys
 import time
-from datetime import date
+from collections import Counter
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 from finance_vibe.bot import config
 from finance_vibe.bot.alpaca_client import AlpacaClient
 from finance_vibe.bot.executor import Executor
 from finance_vibe.bot.signal_engine import SignalEngine
-from finance_vibe.bot.daily_activity import build_eod_flatten_decision
+from finance_vibe.bot.daily_activity import (
+    build_eod_flatten_decision,
+    explain_buy_eligibility,
+)
 from finance_vibe.bot.market_hours import (
     is_eod_flat_window,
     is_eod_window,
@@ -41,9 +46,11 @@ from finance_vibe.bot.ollama_agent import OllamaAgent
 from finance_vibe.bot.regime import benchmark_blocks_new_buys, regime_summary
 from finance_vibe.bot.risk_guard import RiskGuard
 from finance_vibe.bot.session import (
+    acquire_runner_lock,
     clear_runner_pid,
     prepare_clean_session,
     read_alive_runner_pid,
+    release_runner_lock,
     write_runner_pid,
 )
 from finance_vibe.bot.store import BotStore
@@ -53,6 +60,7 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
 )
 logger = logging.getLogger("bot.runner")
+ET = ZoneInfo("America/New_York")
 
 
 class TradingRunner:
@@ -80,6 +88,24 @@ class TradingRunner:
     ) -> None:
         self.store.log_activity(message, level=level, phase=phase, cycle_id=cycle_id)
         logger.info("[%s] %s", phase, message)
+
+    def _reconcile_trades(self, cycle_id: int | None = None) -> None:
+        """Turn today's Alpaca fills into round-trip trade rows."""
+        try:
+            since = datetime.now(ET).replace(
+                hour=0, minute=0, second=0, microsecond=0,
+            )
+            fills = self.alpaca.get_filled_orders(since)
+            res = self.store.reconcile_trades(fills)
+            self.store.annotate_trade_entries()
+            if res["opened"] or res["closed"]:
+                self._log(
+                    f"Trades reconciled: {res['opened']} opened, "
+                    f"{res['closed']} closed (from {len(fills)} fills)",
+                    "trades", cycle_id,
+                )
+        except Exception as exc:
+            logger.warning("Trade reconciliation failed: %s", exc)
 
     def _cancel_late_session_buys(self, cycle_id: int | None = None) -> None:
         """After 3:30 PM cancel stale limit buys so they cannot fill late."""
@@ -220,8 +246,8 @@ class TradingRunner:
 
         if self.risk.day_loss_caution(day_pnl_pct) and not day_loss_blocks:
             self._log(
-                f"DAY CAUTION: day PnL {day_pnl_pct:.2f}% <= {config.DAY_CAUTION_PCT}% "
-                f"— no size increase; buys still allowed if eligible",
+                f"DAY CAUTION: day PnL {day_pnl_pct:.2f}%, halfway to the "
+                f"{config.DAY_BLOCK_BUYS_PCT}% buy block — buys still allowed",
                 "risk", cycle_id, level="warn",
             )
         if day_loss_blocks:
@@ -294,9 +320,41 @@ class TradingRunner:
                 self._log("Consulting Ollama decision engine", "llm", cycle_id)
                 decision = self.agent.decide(ctx)
 
-            self._log(f"Decision: {decision.summary}", "decision", cycle_id)
+            # The summary is LLM prose and the LLM has no trade authority, so it
+            # can name tickers the rules never picked. Say so, rather than let it
+            # read as the plan: on Day 5 it said "buy COIN" while the rules bought
+            # SOFI. The BUY/SELL lines below are the actual decisions.
+            if "commentary" in (decision.model or ""):
+                self._log(f"Commentary (not the plan): {decision.summary}", "llm", cycle_id)
+            else:
+                self._log(f"Decision: {decision.summary}", "decision", cycle_id)
             open_count = len(positions)
             orders_placed = 0
+
+            # Persist the gate verdict for EVERY ticker, not just the ones we
+            # decided to buy. Without the rejections there is no way to tell
+            # afterwards why a profitable move was skipped.
+            try:
+                details = [
+                    explain_buy_eligibility(s, ctx, open_count)
+                    for s in ctx.watchlist
+                ]
+                for d in details:
+                    d["exit_band_pct"] = d.get("exit_band_pct")
+                n = self.store.save_eligibility(cycle_id, details)
+                passed = sum(1 for d in details if d["pass"])
+                blockers = Counter(
+                    d["reject_reason"] for d in details if not d["pass"]
+                )
+                self._log(
+                    f"Eligibility: {passed}/{n} passed | "
+                    + (", ".join(f"{k}={v}" for k, v in blockers.most_common(5))
+                       or "no blockers"),
+                    "eligibility", cycle_id,
+                )
+            except Exception as exc:
+                # Logging must never be able to stop a cycle from trading.
+                logger.warning("Could not persist eligibility: %s", exc)
 
             # SELLs first (one at a time) — avoids held_for_orders when flattening
             sorted_actions = sorted(
@@ -308,15 +366,15 @@ class TradingRunner:
                 snap = snap_map.get(action.ticker)
                 act = action.normalized_action()
                 if act == "BUY" and snap is not None:
-                    from finance_vibe.bot.daily_activity import explain_buy_eligibility
                     detail = explain_buy_eligibility(snap, ctx, open_count)
                     self._log(
                         f"BUY decision {action.ticker}: "
                         f"{'PASS' if detail['pass'] else 'FAIL'} "
                         f"path={detail.get('path')} open%={detail.get('open_pct')} "
                         f"vwap={detail.get('vwap_pct')} rvol={detail.get('rvol')} "
-                        f"score={detail.get('quality_score')} setup={detail.get('setup')} "
-                        f"cobra={detail.get('cobra')} freefall={detail.get('freefall')} "
+                        f"score={detail.get('quality_score')}/{detail.get('score_floor')} "
+                        f"band=+/-{detail.get('exit_band_pct')}% "
+                        f"setup={detail.get('setup')} cobra={detail.get('cobra')} "
                         f"qqq={detail.get('qqq_from_open')} pos={detail.get('position_count')} "
                         f"dayPnL={detail.get('day_pnl_pct')} "
                         f"reason={detail.get('reject_reason') or detail.get('reasons')}",
@@ -388,6 +446,8 @@ class TradingRunner:
             equity = account["equity"]
             cash = account["cash"]
             _, day_pnl_pct = self.risk.check_daily_halt(day_start, equity)
+
+            self._reconcile_trades(cycle_id)
 
             self.store.finish_cycle(
                 cycle_id, "completed",
@@ -461,13 +521,18 @@ class TradingRunner:
         }
 
     def run_daemon(self) -> None:
-        live = read_alive_runner_pid()
-        if live is not None:
+        # Acquire-and-hold, not check-then-claim: two daemons starting in the
+        # same second cannot both win, and the OS frees the lock if we die.
+        if acquire_runner_lock() is None:
+            live = read_alive_runner_pid()
+            where = f" (pid {live})" if live and live > 0 else ""
             raise RuntimeError(
-                f"Runner already running (pid {live}). Close the other FV Bot - Runner window."
+                f"Runner already running{where}. "
+                "Close the other FV Bot - Runner window."
             )
         write_runner_pid()
         atexit.register(clear_runner_pid)
+        atexit.register(release_runner_lock)
 
         logger.info(
             "Daemon started | mode=%s | watchlist=%s | cycle=%sm | max_pos=%s",
@@ -543,10 +608,15 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Finance-Vibe paper trading bot")
     parser.add_argument(
         "command",
-        choices=["cycle", "daemon", "eod", "status", "prepare-session", "resume-session"],
+        choices=[
+            "cycle", "daemon", "eod", "status",
+            "prepare-session", "resume-session", "watchdog-check", "runner-alive",
+        ],
         help="cycle=one run, daemon=scheduled, eod=end-of-day report, "
         "status=account info, prepare-session=cancel/flatten/reset day baseline, "
-        "resume-session=after outage (keep positions + day P&L)",
+        "resume-session=after outage (keep positions + day P&L), "
+        "watchdog-check=exit 10 if the market is open but no runner is alive, "
+        "runner-alive=exit 3 if a runner already holds the lock",
     )
     parser.add_argument("--force", action="store_true", help="Run cycle even if market closed")
     parser.add_argument(
@@ -590,6 +660,35 @@ def main(argv: list[str] | None = None) -> int:
         result = resume_session(alpaca=runner.alpaca, store=runner.store)
         print(json.dumps(result, indent=2))
         return 0
+
+    if args.command == "watchdog-check":
+        # Exit 10 means "market open, runner gone" -> the watchdog relaunches.
+        if not is_market_open():
+            print(json.dumps({"status": "market_closed", "action": "none"}))
+            return 0
+        live = read_alive_runner_pid()
+        if live is not None:
+            print(json.dumps({
+                "status": "alive",
+                "pid": live if live > 0 else None,
+                "action": "none",
+            }))
+            return 0
+        print(json.dumps({"status": "dead", "action": "restart"}))
+        return 10
+
+    if args.command == "runner-alive":
+        # For the launcher's "don't start twice" guard. 3, not 1, means alive:
+        # Python already exits 1 on an unhandled exception, so sharing that code
+        # would let a crashed check impersonate a running runner and block the
+        # launch for the whole day. 0 = free, 3 = alive, anything else = the
+        # check itself failed and the caller should not read it as an answer.
+        live = read_alive_runner_pid()
+        print(json.dumps({
+            "alive": live is not None,
+            "pid": live if (live or 0) > 0 else None,
+        }))
+        return 3 if live is not None else 0
 
     if args.command == "daemon":
         runner.run_daemon()

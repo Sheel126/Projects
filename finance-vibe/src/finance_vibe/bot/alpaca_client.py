@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import time as time_mod
-from datetime import datetime, timedelta, time
+from datetime import UTC, datetime, timedelta, time
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -448,9 +448,18 @@ class AlpacaClient:
         return not self.get_open_orders()
 
     def cancel_stale_non_sell_orders(
-        self, timeout_sec: float = 8.0, symbol: str | None = None,
+        self,
+        timeout_sec: float = 8.0,
+        symbol: str | None = None,
+        min_age_sec: float = 0.0,
     ) -> int:
-        """Cancel BUY/stop orders that lock shares. Never cancel a working SELL."""
+        """Cancel BUY/stop orders that lock shares. Never cancel a working SELL.
+
+        min_age_sec protects orders that were only just placed. A resume runs
+        this, and killing a buy limit seconds after submitting it is how COIN
+        never filled and SOFI filled 325 of 708 on Day 5. The late-session
+        cleanup keeps the default of 0 so it still cancels everything.
+        """
         self._ensure_clients()
         cancelled = 0
         symbols: set[str] = set()
@@ -458,6 +467,12 @@ class AlpacaClient:
             side = str(o.get("side", "")).upper()
             otype = str(o.get("type", "")).lower()
             if "SELL" in side and "stop" not in otype:
+                continue
+            if min_age_sec > 0 and self._order_age_sec(o) < min_age_sec:
+                logger.info(
+                    "Keeping working %s %s — only %.0fs old",
+                    side, o.get("symbol"), self._order_age_sec(o),
+                )
                 continue
             try:
                 self._trading.cancel_order_by_id(o["id"])
@@ -502,6 +517,59 @@ class AlpacaClient:
         order = self._trading.get_order_by_id(order_id)
         return self._order_dict(order)
 
+    def get_filled_orders(
+        self, since: datetime, limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        """Authoritative fill history, newest first, for trade reconciliation.
+
+        The local orders table records submit-time status, so an order that
+        filled later can still be stored as pending. Alpaca is the only
+        reliable source for what actually executed and at what price.
+        """
+        self._ensure_clients()
+        from alpaca.trading.requests import GetOrdersRequest
+        from alpaca.trading.enums import QueryOrderStatus
+
+        req = GetOrdersRequest(
+            status=QueryOrderStatus.CLOSED,
+            after=since,
+            limit=limit,
+            direction="desc",
+        )
+        out: list[dict[str, Any]] = []
+        for o in self._trading.get_orders(req):
+            if self._normalize_status(o.status) != "filled":
+                continue
+            filled_at = getattr(o, "filled_at", None)
+            qty = float(getattr(o, "filled_qty", 0) or 0)
+            px = float(o.filled_avg_price or 0)
+            if qty <= 0 or px <= 0 or filled_at is None:
+                continue
+            out.append({
+                "id": str(o.id),
+                "symbol": o.symbol.upper(),
+                "side": str(o.side).replace("OrderSide.", "").upper(),
+                "qty": qty,
+                "price": px,
+                "filled_at": filled_at,
+            })
+        return out
+
+    @staticmethod
+    def _order_age_sec(order: dict[str, Any]) -> float:
+        """Seconds since submission; inf when unknown, so unknown = cancellable."""
+        raw = order.get("submitted_at")
+        if raw is None:
+            return float("inf")
+        try:
+            if isinstance(raw, str):
+                raw = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if raw.tzinfo is None:
+                raw = raw.replace(tzinfo=UTC)
+            return (datetime.now(UTC) - raw).total_seconds()
+        except (ValueError, TypeError, AttributeError):
+            return float("inf")
+
     @staticmethod
     def _normalize_status(status: Any) -> str:
         s = str(status)
@@ -522,4 +590,5 @@ class AlpacaClient:
             "filled_avg_price": float(order.filled_avg_price or 0),
             "limit_price": float(order.limit_price or 0) if order.limit_price else None,
             "stop_price": float(order.stop_price or 0) if order.stop_price else None,
+            "submitted_at": getattr(order, "submitted_at", None),
         }

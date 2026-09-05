@@ -29,14 +29,10 @@ def sector_for(ticker: str) -> str:
 
 
 def compute_tight_stop(snap: TickerSnapshot) -> float | None:
-    """Tighter intraday stop for quick-flip trades."""
+    """Intraday stop price, one ATR band below entry (same band as the exit)."""
     if snap.price <= 0:
         return None
-    floor_pct = snap.price * (1 - config.ACTIVE_STOP_PCT / 100)
-    if snap.atr and snap.atr > 0:
-        atr_stop = snap.price - snap.atr * config.ACTIVE_ATR_MULT
-        return round(max(atr_stop, floor_pct), 2)
-    return round(floor_pct, 2)
+    return round(snap.price * (1 - exit_band_pct(snap) / 100.0), 2)
 
 
 def preferred_stop(snap: TickerSnapshot) -> float | None:
@@ -46,101 +42,16 @@ def preferred_stop(snap: TickerSnapshot) -> float | None:
     return snap.tight_stop or compute_tight_stop(snap)
 
 
-def has_research_structure(snap: TickerSnapshot) -> bool:
-    """Finance-Vibe quality structure (what the non-bot scanners look for)."""
-    if snap.setup_type == "SETUP_LONG":
-        return True
-    if snap.setup_type and str(snap.setup_type).startswith("PENDING"):
-        return True
-    if snap.coiled_cobra_grade and (
-        "A" in snap.coiled_cobra_grade or "B" in snap.coiled_cobra_grade
-    ):
-        return True
-    return False
+def in_entry_band(snap: TickerSnapshot) -> bool:
+    """One timing gate: is the move from the open still worth joining?
 
-
-def has_quality_bias(snap: TickerSnapshot) -> bool:
-    """Structure OR strong vibe/conviction confluence."""
-    if has_research_structure(snap):
-        return True
-    vibe_ok = snap.vibe_score is not None and snap.vibe_score >= config.MIN_BUY_VIBE
-    conv_ok = (snap.conviction or 0) >= config.MIN_BUY_CONVICTION
-    return bool(vibe_ok and conv_ok)
-
-
-def _has_cobra_ab(snap: TickerSnapshot) -> bool:
-    g = snap.coiled_cobra_grade or ""
-    return "A" in g or "B" in g
-
-
-def _price_action_confirm(snap: TickerSnapshot) -> bool:
-    """VWAP or ORB confirmation — RVOL alone is never enough."""
-    vwap_ok = (
-        snap.price_vs_vwap_pct is not None
-        and snap.price_vs_vwap_pct >= config.VWAP_BUY_BELOW_PCT
-    )
-    orb_up = snap.orb_signal == "ORB_BREAKOUT_UP"
-    return bool(vwap_ok or orb_up)
-
-
-def _strength_structure_ok(snap: TickerSnapshot, chg: float) -> bool:
-    """Day-4 strength structural gate.
-
-    SETUP_LONG or cobra A/B required for open% > +1.0%.
-    PENDING alone only allowed if open% <= +1.0% AND VWAP/ORB confirm.
+    Replaces the old strength/pullback split. Those were two code paths with
+    four thresholds between them, all fitted to four days, and they rejected
+    88% of snapshots. The band alone expresses the same idea: do not catch a
+    knife, do not chase something that has already run.
     """
-    if snap.setup_type == "SETUP_LONG" or _has_cobra_ab(snap):
-        return True
-    pending = bool(snap.setup_type and str(snap.setup_type).startswith("PENDING"))
-    if pending and chg <= 1.0:
-        return _price_action_confirm(snap)
-    return False
-
-
-def is_freefall(snap: TickerSnapshot) -> bool:
-    """Reject catching knives that are dumping hard without SETUP_LONG / cobra A."""
     chg = snap.change_from_open_pct or 0.0
-    if chg > config.MAX_DIP_BUY_PCT:
-        return False
-    if snap.setup_type == "SETUP_LONG":
-        return False
-    if snap.coiled_cobra_grade and "A" in snap.coiled_cobra_grade:
-        return False
-    return True
-
-
-def timing_constructive_strength(snap: TickerSnapshot) -> bool:
-    """Strength path: 0..+STRENGTH_MAX open% with structure + VWAP/ORB.
-
-    RVOL may boost score elsewhere but is NOT sufficient confirmation for
-    open% >= +2.0% (and is never the sole gate here).
-    """
-    if not config.ALLOW_STRENGTH_BUYS:
-        return False
-    chg = snap.change_from_open_pct or 0.0
-    if chg < 0 or chg > config.STRENGTH_MAX_OPEN_PCT:
-        return False
-    if not _strength_structure_ok(snap, chg):
-        return False
-    if not _price_action_confirm(snap):
-        return False
-    return True
-
-
-def timing_quality_pullback(snap: TickerSnapshot) -> bool:
-    """Pullback path: MAX_DIP..+PULLBACK_MAX with quality bias; not collapsing IBS."""
-    chg = snap.change_from_open_pct or 0.0
-    if chg < config.MAX_DIP_BUY_PCT or chg > config.PULLBACK_MAX_OPEN_PCT:
-        return False
-    if not has_research_structure(snap) and (snap.conviction or 0) < config.MIN_BUY_CONVICTION:
-        return False
-    if snap.ibs is not None and snap.ibs < 0.08:
-        return False
-    return True
-
-
-def has_valid_timing(snap: TickerSnapshot) -> bool:
-    return timing_constructive_strength(snap) or timing_quality_pullback(snap)
+    return config.ENTRY_MIN_FROM_OPEN_PCT <= chg <= config.ENTRY_MAX_FROM_OPEN_PCT
 
 
 def compute_active_score(snap: TickerSnapshot) -> float:
@@ -184,32 +95,30 @@ def compute_active_score(snap: TickerSnapshot) -> float:
     if snap.vs_qqq_pct is not None and snap.vs_qqq_pct > 0:
         score += min(8.0, snap.vs_qqq_pct * 2.0)
 
+    # Volume interest, as a score input only. The old MIN_RVOL / hard-floor
+    # pair was a hard gate and silently blocked every buy on Day 4.
     rvol = snap.rvol
     if rvol is not None:
         if rvol >= 1.5:
             score += 14.0
         elif rvol >= 1.2:
             score += 10.0
-        elif rvol >= config.MIN_RVOL:
+        elif rvol >= 0.75:
             score += 5.0
-        elif rvol < config.MIN_RVOL_HARD_FLOOR:
-            score -= 8.0
 
-    if snap.ml_rank is not None and snap.ml_rank <= 5:
-        score += max(0.0, 10.0 - snap.ml_rank * 1.5)
+    # ml_rank bonus lives in signal_engine only — applying it here too was
+    # double-counting it.
 
     chg = snap.change_from_open_pct or 0.0
-    if timing_quality_pullback(snap):
+    # Mild timing preference: buying a pullback beats buying a run-up.
+    if chg <= 0:
         score += 10.0
-        if chg <= -0.25:
-            score += min(8.0, abs(chg) * 3.0)
-    elif timing_constructive_strength(snap):
+        score += min(8.0, abs(chg) * 3.0)
+    else:
         score += 12.0
         if snap.price_vs_vwap_pct is not None and snap.price_vs_vwap_pct >= 0:
             score += 4.0
 
-    if is_freefall(snap):
-        score -= 25.0
     if chg <= -4.0:
         score -= 15.0
     if chg >= 3.0:
@@ -243,49 +152,63 @@ def _action_map(actions: list[TradeAction]) -> dict[str, TradeAction]:
     return {a.ticker: a for a in actions}
 
 
+def exit_band_pct(snap: TickerSnapshot) -> float:
+    """Take-profit / stop distance, scaled to the stock's own daily range.
+
+    A single fixed target cannot fit this watchlist: daily ATR runs from ~2%
+    (GLD) to ~6.8% (COIN), so 1.2% is most of a quiet name's whole day and
+    noise on a fast one. The clamps are safety rails, not tuned values.
+    """
+    if snap.atr and snap.price > 0:
+        band = config.ATR_EXIT_MULT * (snap.atr / snap.price * 100.0)
+    else:
+        band = config.ATR_EXIT_MULT * 4.0      # no ATR: assume a middling 4% name
+    return round(min(max(band, 0.6), 4.0), 2)
+
+
 def should_quick_sell(snap: TickerSnapshot) -> tuple[bool, str, float]:
-    """Return (sell?, reason, sell_pct)."""
+    """Return (sell?, reason, sell_pct).
+
+    Take-profit and stop-loss only, both at +/- one ATR band. Discretionary
+    exits (RSI, % from open, target1, VWAP profit-take) were measured to cut
+    winners early; anything that hits neither band rides to the EOD flatten.
+    """
     if not snap.in_position:
         return False, "", 0.0
 
     pnl = snap.position_pnl_pct or 0.0
-    if pnl >= config.QUICK_PROFIT_PCT:
-        return True, f"quick profit {pnl:.2f}%", 100.0
-    if pnl <= -config.QUICK_STOP_LOSS_PCT:
-        return True, f"cut loss {pnl:.2f}%", 100.0
-    if snap.rsi is not None and snap.rsi > config.ACTIVE_SELL_RSI:
-        return True, f"rsi {snap.rsi:.0f} extended", 100.0
-    if (snap.change_from_open_pct or 0) >= config.ACTIVE_SELL_FROM_OPEN_PCT:
-        return True, f"+{snap.change_from_open_pct:.1f}% from open", 100.0
-    if snap.target1 and snap.price >= snap.target1:
-        return True, "hit target1", 100.0
-    if (
-        snap.price_vs_vwap_pct is not None
-        and snap.price_vs_vwap_pct >= 0.35
-        and pnl >= config.QUICK_PROFIT_PCT * 0.6
-    ):
-        return True, f"above VWAP +{snap.price_vs_vwap_pct:.2f}%", 100.0
+    band = exit_band_pct(snap)
+    if pnl >= band:
+        return True, f"target +{pnl:.2f}% (band {band:.2f}%)", 100.0
+    if pnl <= -band:
+        return True, f"stop {pnl:.2f}% (band {band:.2f}%)", 100.0
     return False, "", 0.0
 
 
-def _score_floor(snap: TickerSnapshot) -> float:
-    """SETUP_LONG / cobra A may pass at lower score; others use ACTIVE_MIN_BUY_SCORE."""
-    if snap.setup_type == "SETUP_LONG":
-        return config.ACTIVE_SETUP_MIN_BUY_SCORE
-    if snap.coiled_cobra_grade and "A" in snap.coiled_cobra_grade:
-        return config.ACTIVE_SETUP_MIN_BUY_SCORE
-    return config.ACTIVE_MIN_BUY_SCORE
+def hold_reason(snap: TickerSnapshot) -> str:
+    """Why this ticker was left alone, phrased for whichever side applies.
+
+    An open position that is not being sold is a *sell*-side outcome, so it
+    reports its distance from the exit bands. Reporting the buy-side "no
+    quality setup" for a held position reads as though the exit never ran,
+    which is what turned HOOD into a false alarm on Day 5.
+    """
+    if not snap.in_position:
+        return "no quality setup"
+    pnl = snap.position_pnl_pct or 0.0
+    band = exit_band_pct(snap)
+    return (
+        f"holding {pnl:+.2f}% | exits at +/-{band:.2f}% "
+        f"({band - pnl:+.2f}% to target, {-band - pnl:+.2f}% to stop)"
+    )
 
 
 def explain_buy_eligibility(
     snap: TickerSnapshot, ctx: CycleContext, open_count: int,
 ) -> dict:
     """Structured PASS/FAIL reasons for observability / post-day audit."""
-    path = None
-    if timing_constructive_strength(snap):
-        path = "strength"
-    elif timing_quality_pullback(snap):
-        path = "pullback"
+    chg = snap.change_from_open_pct or 0.0
+    path = "pullback" if chg <= 0 else "strength"
 
     reasons: list[str] = []
     ok = True
@@ -314,39 +237,25 @@ def explain_buy_eligibility(
         ok = False
         reasons.append("invalid_stop")
 
-    rsi = snap.rsi
-    if rsi is not None and (rsi < config.ACTIVE_MIN_RSI or rsi > config.ACTIVE_MAX_RSI):
+    # Anti-chase: refuse anything already stretched this far above VWAP.
+    vwap_pct = snap.price_vs_vwap_pct
+    if vwap_pct is not None and vwap_pct > config.VWAP_BUY_MAX_ABOVE_PCT:
         ok = False
-        reasons.append(f"rsi_{rsi:.0f}")
+        reasons.append(f"extended_vs_vwap_{vwap_pct:.2f}")
 
-    if config.BUY_MODE != "dip":
-        if config.REQUIRE_STRUCTURE and not has_quality_bias(snap):
-            ok = False
-            reasons.append("no_quality_bias")
-        if is_freefall(snap):
-            ok = False
-            reasons.append("freefall")
-        if not has_valid_timing(snap):
-            ok = False
-            reasons.append("timing_fail")
-        if snap.rvol is not None and snap.rvol < config.MIN_RVOL_HARD_FLOOR:
-            ok = False
-            reasons.append(f"dead_rvol_{snap.rvol:.2f}")
-        score = snap.active_score or compute_active_score(snap)
-        floor = _score_floor(snap)
-        if score < floor:
-            ok = False
-            reasons.append(f"score_{score:.0f}<{floor:.0f}")
-        elif ok:
-            reasons.append("PASS")
-    else:
-        chg = snap.change_from_open_pct or 0.0
-        score = snap.active_score or compute_active_score(snap)
-        if not (chg <= config.DIP_BUY_FROM_OPEN_PCT or score >= config.ACTIVE_MIN_BUY_SCORE):
-            ok = False
-            reasons.append("dip_mode_fail")
-        elif ok:
-            reasons.append("PASS")
+    # Timing: one band, replacing the strength/pullback split.
+    if not in_entry_band(snap):
+        ok = False
+        reasons.append(f"outside_entry_band_{chg:.2f}")
+
+    # Quality: one floor. The old RSI band, RVOL floors, vibe and conviction
+    # gates all re-tested things active_score already accounts for.
+    score = snap.active_score or compute_active_score(snap)
+    if score < config.MIN_BUY_SCORE:
+        ok = False
+        reasons.append(f"score_{score:.0f}<{config.MIN_BUY_SCORE:.0f}")
+    elif ok:
+        reasons.append("PASS")
 
     return {
         "ticker": snap.ticker,
@@ -356,13 +265,21 @@ def explain_buy_eligibility(
         "price": snap.price,
         "vwap_pct": snap.price_vs_vwap_pct,
         "rvol": snap.rvol,
-        "quality_score": snap.active_score or compute_active_score(snap),
+        "rsi": snap.rsi,
+        "atr": snap.atr,
+        "quality_score": score,
+        "score_floor": config.MIN_BUY_SCORE,
         "setup": snap.setup_type,
         "cobra": snap.coiled_cobra_grade,
-        "freefall": is_freefall(snap),
+        "conviction": snap.conviction,
+        "vibe_score": snap.vibe_score,
+        "rs_63d": snap.rs_63d,
+        "exit_band_pct": exit_band_pct(snap),
         "qqq_from_open": ctx.benchmark_change_from_open_pct,
+        "in_position": snap.in_position,
         "position_count": open_count,
         "day_pnl_pct": ctx.day_pnl_pct,
+        "entries_blocked": bool(getattr(ctx, "entries_blocked", False)),
         "reasons": reasons,
         "reject_reason": None if (ok and reasons and reasons[-1] == "PASS") else (
             reasons[-1] if reasons else "unknown"
@@ -371,21 +288,15 @@ def explain_buy_eligibility(
 
 
 def _buy_eligible(snap: TickerSnapshot, ctx: CycleContext, open_count: int) -> bool:
-    """Quality hybrid eligibility — deterministic final authority (Day-4).
+    """Deterministic final buy authority. Three strategy gates, that is all:
 
-    Strength path (documented):
-      0 <= open% <= STRENGTH_MAX (+3.5 default)
-      AND (SETUP_LONG or cobra A/B; PENDING only if open%<=+1.0)
-      AND (VWAP >= VWAP_BUY_BELOW_PCT or ORB_BREAKOUT_UP)
-      RVOL alone is NEVER sufficient for strength confirmation.
+      1. open% within ENTRY_MIN..ENTRY_MAX_FROM_OPEN_PCT (do not catch a
+         knife, do not chase a completed move)
+      2. price_vs_vwap_pct <= VWAP_BUY_MAX_ABOVE_PCT (anti-chase)
+      3. active_score >= MIN_BUY_SCORE (one quality floor)
 
-    Pullback path:
-      MAX_DIP <= open% <= PULLBACK_MAX
-      AND quality bias / structure
-      AND not freefall without SETUP_LONG/cobra A
-      AND IBS not collapsing (<0.08)
-
-    Score: ACTIVE_MIN_BUY_SCORE ranks; SETUP_LONG/cobra A may pass at SETUP floor.
+    Plus the mechanical checks: not halted, not already held, no open buy
+    order, position slots free, sane price and stop.
     """
     detail = explain_buy_eligibility(snap, ctx, open_count)
     return bool(detail["pass"])
@@ -436,13 +347,11 @@ def _pick_buys(
 
 
 def _position_pct(snap: TickerSnapshot, regime_ok: bool) -> float:
-    score = snap.active_score or compute_active_score(snap)
+    """Flat size. Upsizing high-score names concentrated risk when the score
+    was wrong; only the unfavourable-regime reduction is kept.
+    """
     if not regime_ok:
         return config.ACTIVE_POSITION_PCT * 0.75
-    if score >= 70:
-        return min(config.ACTIVE_POSITION_PCT * 1.35, config.MAX_POSITION_PCT * 100)
-    if score >= 55:
-        return config.ACTIVE_POSITION_PCT * 1.15
     return config.ACTIVE_POSITION_PCT
 
 
@@ -461,10 +370,8 @@ def _buy_reason(snap: TickerSnapshot) -> str:
     chg = snap.change_from_open_pct
     if chg is not None:
         parts.append(f"open={chg:+.2f}%")
-    if timing_constructive_strength(snap):
-        parts.append("strength")
-    elif timing_quality_pullback(snap):
-        parts.append("pullback")
+        parts.append("pullback" if chg <= 0 else "strength")
+    parts.append(f"band={exit_band_pct(snap):.2f}%")
     return " ".join(parts)
 
 
@@ -501,7 +408,7 @@ def build_daily_decision(ctx: CycleContext) -> AgentDecision:
         if snap.ticker in actions_by_ticker:
             actions.append(actions_by_ticker[snap.ticker])
         else:
-            actions.append(TradeAction(snap.ticker, "HOLD", reason="no quality setup"))
+            actions.append(TradeAction(snap.ticker, "HOLD", reason=hold_reason(snap)))
 
     summary_parts = []
     if sells:
@@ -510,18 +417,21 @@ def build_daily_decision(ctx: CycleContext) -> AgentDecision:
         summary_parts.append(f"{len(buys)} quality buys")
     summary = ", ".join(summary_parts) if summary_parts else "scanning for quality setups"
 
-    return AgentDecision(
-        actions=actions,
-        summary=summary,
-        used_fallback=True,
-        model="daily_quality_rules",
+    return enforce_minimum_activity(
+        AgentDecision(
+            actions=actions,
+            summary=summary,
+            used_fallback=True,
+            model="daily_quality_rules",
+        ),
+        ctx,
     )
 
 
 def enforce_minimum_activity(
     decision: AgentDecision, ctx: CycleContext,
 ) -> AgentDecision:
-    """If no trades proposed and activity required, force a rotation trade."""
+    """If no trades proposed and activity required, force one quality buy."""
     if not config.REQUIRE_DAILY_ACTIVITY or ctx.halted:
         return decision
 
@@ -546,79 +456,38 @@ def enforce_minimum_activity(
             reason=f"forced activity {_buy_reason(snap)}",
         )
         decision.actions = [
-            action_map.get(t.ticker, TradeAction(t.ticker, "HOLD"))
+            action_map.get(t.ticker, TradeAction(t.ticker, "HOLD", reason=hold_reason(t)))
             for t in ctx.watchlist
         ]
         decision.summary = f"Forced quality buy {snap.ticker} (no idle cycles)"
         return decision
 
-    held = [s for s in ctx.watchlist if s.in_position]
-    if not held:
-        return decision
-
-    winners = [s for s in held if (s.position_pnl_pct or 0) >= 0]
-    rotate = min(winners, key=lambda s: s.position_pnl_pct or 0) if winners else min(
-        held, key=lambda s: s.position_pnl_pct or 0,
-    )
-    action_map[rotate.ticker] = TradeAction(
-        rotate.ticker, "SELL", 100.0,
-        reason=f"forced rotation pnl={rotate.position_pnl_pct:.2f}%",
-    )
-    decision.actions = [
-        action_map.get(t.ticker, TradeAction(t.ticker, "HOLD"))
-        for t in ctx.watchlist
-    ]
-    decision.summary = f"Forced rotate sell {rotate.ticker}"
+    # No quality buy available: stay idle. Forcing a rotation sell here used to
+    # dump the smallest winner, which is the exact behaviour TP/SL exits replace.
     return decision
 
 
 def merge_llm_with_daily(
     llm: AgentDecision, ctx: CycleContext,
 ) -> AgentDecision:
-    """Layer LLM on top of daily rules; daily sells win; LLM buys must pass quality."""
+    """Trades come from the rules; the LLM contributes only its summary text.
+
+    The LLM used to be able to add buys and reorder candidates. Measured over
+    the 125 stored cycles, ranking makes no difference at all: shuffling the
+    gate-passing candidates into random order scored +2.47% on average against
+    +2.00% for score-ranked, with the ranked result sitting inside the random
+    spread. Since reordering gate-passing candidates is the *most* the LLM
+    could ever do, it cannot be shown to add value on this evidence — and it
+    made every cycle non-reproducible, which broke the replay harness.
+    """
     base = build_daily_decision(ctx)
-    base_map = _action_map(base.actions)
-    llm_map = _action_map(llm.actions)
-    open_count = len(ctx.open_positions)
-
-    merged: list[TradeAction] = []
-    for snap in ctx.watchlist:
-        t = snap.ticker
-        daily = base_map.get(t)
-        agent = llm_map.get(t)
-        if daily and daily.normalized_action() == "SELL":
-            merged.append(daily)
-        elif agent and agent.normalized_action() == "BUY":
-            # LLM cannot bypass quality gates
-            if _buy_eligible(snap, ctx, open_count):
-                stop = agent.stop or preferred_stop(snap)
-                merged.append(TradeAction(
-                    t, "BUY", agent.pct or config.ACTIVE_POSITION_PCT,
-                    stop=stop,
-                    reason=agent.reason or (daily.reason if daily else _buy_reason(snap)),
-                ))
-                open_count += 1
-            elif daily and daily.normalized_action() == "BUY":
-                merged.append(daily)
-                open_count += 1
-            else:
-                merged.append(TradeAction(t, "HOLD", reason="LLM buy failed quality gate"))
-        elif daily and daily.normalized_action() == "BUY":
-            merged.append(daily)
-            open_count += 1
-        elif agent and agent.normalized_action() == "SELL":
-            merged.append(agent)
-        else:
-            merged.append(TradeAction(t, "HOLD", reason="hold"))
-
-    out = AgentDecision(
-        actions=merged,
+    return AgentDecision(
+        actions=base.actions,
         summary=llm.summary or base.summary,
         raw_response=llm.raw_response,
-        model=llm.model,
+        model=f"{llm.model} (commentary only)" if llm.model else base.model,
         used_fallback=llm.used_fallback,
     )
-    return enforce_minimum_activity(out, ctx)
 
 
 def build_eod_flatten_decision(ctx: CycleContext) -> AgentDecision | None:

@@ -11,6 +11,7 @@ assert _spec.loader is not None
 _spec.loader.exec_module(_mod)
 
 import json
+from datetime import datetime, timezone
 
 from flask import Flask, jsonify, render_template_string
 
@@ -93,6 +94,15 @@ DASHBOARD_HTML = """
     .activity-line.warn .ph { color: var(--amber); }
     .activity-line.error .ph { color: var(--red); }
     .sig-up { color: var(--green); } .sig-down { color: var(--red); }
+    .runner-banner {
+      margin: 0.6rem 0; padding: 0.6rem 0.9rem; border-radius: 6px;
+      font-weight: 700; font-size: 0.95rem; border: 1px solid var(--border);
+    }
+    .runner-banner.alive { background: #1a3d2e; color: var(--green); border-color: #2d5a40; }
+    .runner-banner.stale { background: #3d1a1a; color: var(--red); border-color: #5a2d2d; }
+    .runner-banner.off   { background: #3d1a1a; color: var(--red); border-color: #5a2d2d; }
+    .runner-banner.idle  { background: #23293a; color: var(--muted); }
+    .runner-banner .fix { display: block; font-weight: 400; font-size: 0.8rem; margin-top: 0.3rem; }
   </style>
 </head>
 <body>
@@ -104,6 +114,14 @@ DASHBOARD_HTML = """
     &nbsp;|&nbsp; Watchlist: {{ watchlist|length }} tickers
     <span class="refresh"> — auto-refresh 15s</span>
   </p>
+
+  <div class="runner-banner {{ runner_alive.state }}">
+    RUNNER: {{ runner_alive.label }}
+    {% if runner_alive.state in ['stale', 'off'] %}
+    <span class="fix">Market is open but the runner is not cycling. Positions are unmanaged.
+      Restart with <code>.&#92;start-paper-bot.ps1 -Resume</code> (never a plain start — that flattens).</span>
+    {% endif %}
+  </div>
 
   <div class="status-bar">
     <span class="phase">Bot status:</span>
@@ -303,6 +321,30 @@ def _health_banner_class(health) -> str:
     return "ready" if health.market_phase == "market_open" else "warn"
 
 
+def _runner_alive(status: dict) -> dict:
+    """ALIVE / STALE / OFF from the cycle heartbeat.
+
+    Stale after two missed cycles, so a dead runner is visible on the dashboard
+    within ~40 minutes instead of being discovered at EOD.
+    """
+    beat = status.get("last_heartbeat")
+    if not beat:
+        return {"state": "off", "label": "NO HEARTBEAT", "age_min": None}
+    try:
+        ts = datetime.fromisoformat(beat)
+    except ValueError:
+        return {"state": "off", "label": "NO HEARTBEAT", "age_min": None}
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    age = (datetime.now(timezone.utc) - ts).total_seconds() / 60
+    stale_after = config.CYCLE_MINUTES * 2
+    if not is_market_open():
+        return {"state": "idle", "label": "IDLE (market closed)", "age_min": age}
+    if age > stale_after:
+        return {"state": "stale", "label": f"STALE — no cycle for {age:.0f} min", "age_min": age}
+    return {"state": "alive", "label": f"ALIVE — last cycle {age:.0f} min ago", "age_min": age}
+
+
 def _last_signal_rows(store: BotStore) -> list[dict]:
     cycles = store.recent_cycles(1)
     if not cycles:
@@ -363,6 +405,7 @@ def index():
         orders=store.recent_orders(20),
         signal_rows=_last_signal_rows(store),
         runner_status=store.get_runner_status(),
+        runner_alive=_runner_alive(store.get_runner_status()),
         health=health,
         health_class=_health_banner_class(health),
         market_phase=health.market_phase,
@@ -371,9 +414,11 @@ def index():
 
 @app.route("/api/activity")
 def api_activity():
+    status = store.get_runner_status()
     return jsonify({
         "activity": store.recent_activity(60),
-        "runner": store.get_runner_status(),
+        "runner": status,
+        "runner_alive": _runner_alive(status),
         "market_open": is_market_open(),
         "now_et": now_et().isoformat(),
     })
