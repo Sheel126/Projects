@@ -1,0 +1,71 @@
+{
+  "name": "december_flush_undone_by_a_january_rebuy",
+  "description": "The flush harvests a 1500 loss on 12-29 to offset a 2000 gain, then buys back on 01-10 - inside the 30-day window - so 1091 disallows the entire harvested loss. 2026 tax is 32 percent of 2000 (640.00) instead of 32 percent of 500 (160.00): the rebuy cost 480 of deferral. Phase 4 measures exactly this.",
+  "config": {
+    "lot_method": "FIFO",
+    "short_term_rate": 0.32,
+    "payment_schedule": "none"
+  },
+  "as_of": "2027-06-30",
+  "trades": [
+    {
+      "date": "2026-03-02",
+      "symbol": "HHH",
+      "side": "buy",
+      "qty": 100,
+      "price": 50.0
+    },
+    {
+      "date": "2026-06-02",
+      "symbol": "HHH",
+      "side": "sell",
+      "qty": 100,
+      "price": 70.0,
+      "exit_reason": "take_profit"
+    },
+    {
+      "date": "2026-11-02",
+      "symbol": "GGG",
+      "side": "buy",
+      "qty": 100,
+      "price": 100.0
+    },
+    {
+      "date": "2026-12-29",
+      "symbol": "GGG",
+      "side": "sell",
+      "qty": 100,
+      "price": 85.0,
+      "exit_reason": "december_flush"
+    },
+    {
+      "date": "2027-01-10",
+      "symbol": "GGG",
+      "side": "buy",
+      "qty": 100,
+      "price": 86.0
+    }
+  ],
+  "expected": {
+    "realized_gain": 2000.0,
+    "disallowed_losses": [
+      {
+        "sell_date": "2026-12-29",
+        "symbol": "GGG",
+        "amount": 1500.0
+      }
+    ],
+    "open_lots": [
+      {
+        "symbol": "GGG",
+        "qty": 100,
+        "cost_basis": 10100.0,
+        "acquired": "2027-01-10",
+        "holding_period_start": "2026-11-14"
+      }
+    ],
+    "tax_reserve": 640.0,
+    "deferred_loss_balance": 1500.0,
+    "blacklist": []
+  }
+}

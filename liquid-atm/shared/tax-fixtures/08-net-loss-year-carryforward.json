@@ -1,0 +1,50 @@
+{
+  "name": "net_loss_year_carries_forward_and_shields_next_year",
+  "description": "A 10000 net loss in 2026 does not refund cash: 3000 is deductible against ordinary income and 7000 carries forward, shielding all but 1000 of the 2027 gain. Reserve is 32 percent of 1000, not of 8000.",
+  "config": {
+    "lot_method": "FIFO",
+    "short_term_rate": 0.32,
+    "payment_schedule": "none"
+  },
+  "as_of": "2027-12-31",
+  "trades": [
+    {
+      "date": "2026-01-05",
+      "symbol": "CCC",
+      "side": "buy",
+      "qty": 1000,
+      "price": 100.0
+    },
+    {
+      "date": "2026-03-10",
+      "symbol": "CCC",
+      "side": "sell",
+      "qty": 1000,
+      "price": 90.0,
+      "exit_reason": "stop_loss"
+    },
+    {
+      "date": "2027-02-01",
+      "symbol": "DDD",
+      "side": "buy",
+      "qty": 1000,
+      "price": 50.0
+    },
+    {
+      "date": "2027-06-01",
+      "symbol": "DDD",
+      "side": "sell",
+      "qty": 1000,
+      "price": 58.0,
+      "exit_reason": "take_profit"
+    }
+  ],
+  "expected": {
+    "realized_gain": -2000.0,
+    "disallowed_losses": [],
+    "open_lots": [],
+    "tax_reserve": 320.0,
+    "carryforward": 0.0,
+    "blacklist": []
+  }
+}

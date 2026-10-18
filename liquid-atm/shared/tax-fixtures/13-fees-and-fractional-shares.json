@@ -1,0 +1,41 @@
+{
+  "name": "sell_fees_and_fractional_shares_allocate_without_losing_a_penny",
+  "description": "A 5-share sell spanning two fractional lots with a 0.42 regulatory fee. Fees reduce proceeds and are split pro rata by quantity with the rounding residual on the last slice, so the allocated pieces sum to the fee exactly.",
+  "config": {
+    "lot_method": "FIFO",
+    "short_term_rate": 0.32,
+    "payment_schedule": "none"
+  },
+  "trades": [
+    {
+      "date": "2026-02-02",
+      "symbol": "III",
+      "side": "buy",
+      "qty": 3.5,
+      "price": 101.37
+    },
+    {
+      "date": "2026-02-02",
+      "symbol": "III",
+      "side": "buy",
+      "qty": 1.5,
+      "price": 99.01
+    },
+    {
+      "date": "2026-04-01",
+      "symbol": "III",
+      "side": "sell",
+      "qty": 5,
+      "price": 110.0,
+      "fees": 0.42,
+      "exit_reason": "take_profit"
+    }
+  ],
+  "expected": {
+    "realized_gain": 46.26,
+    "disallowed_losses": [],
+    "open_lots": [],
+    "tax_reserve": 14.8,
+    "blacklist": []
+  }
+}

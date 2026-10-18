@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "liquid-atm-quant"
+version = "0.0.1"
+description = "Liquid ATM research/quant service: data, signals, backtests, local-LLM gate"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.8",
+    "pydantic-settings>=2.4",
+    "httpx>=0.27",
+    "redis>=5.0",
+    "psycopg[binary]>=3.2",
+    "alpaca-py>=0.30",
+    "pandas>=2.2",
+    "numpy>=1.26",
+    "yfinance>=0.2.50",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "fakeredis[lua]>=2.24",
+    "respx>=0.21",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+liquid_atm_quant = ["infra/*.lua"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,50 @@
+{
+  "name": "long_term_boundary_is_the_day_after_the_anniversary",
+  "description": "Both lots bought 2026-03-02. Selling on 2027-03-02 is still SHORT term; selling on 2027-03-03 is LONG term. The reserve (160 short + 75 long = 235) is what distinguishes a correct engine from one that is off by one day.",
+  "config": {
+    "lot_method": "FIFO",
+    "short_term_rate": 0.32,
+    "long_term_rate": 0.15,
+    "payment_schedule": "none"
+  },
+  "as_of": "2027-12-31",
+  "trades": [
+    {
+      "date": "2026-03-02",
+      "symbol": "SHRT",
+      "side": "buy",
+      "qty": 10,
+      "price": 100.0
+    },
+    {
+      "date": "2026-03-02",
+      "symbol": "LONG",
+      "side": "buy",
+      "qty": 10,
+      "price": 100.0
+    },
+    {
+      "date": "2027-03-02",
+      "symbol": "SHRT",
+      "side": "sell",
+      "qty": 10,
+      "price": 150.0,
+      "exit_reason": "time_stop"
+    },
+    {
+      "date": "2027-03-03",
+      "symbol": "LONG",
+      "side": "sell",
+      "qty": 10,
+      "price": 150.0,
+      "exit_reason": "time_stop"
+    }
+  ],
+  "expected": {
+    "realized_gain": 1000.0,
+    "disallowed_losses": [],
+    "open_lots": [],
+    "tax_reserve": 235.0,
+    "blacklist": []
+  }
+}

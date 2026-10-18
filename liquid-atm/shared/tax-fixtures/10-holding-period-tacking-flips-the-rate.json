@@ -1,0 +1,57 @@
+{
+  "name": "washed_holding_period_tacks_on_and_flips_the_tax_rate",
+  "description": "A lot held 17 months is sold at a loss and replaced 9 days later. Under 1091(d) the replacement inherits 511 days of holding period, so selling it 7 months later is LONG term: the reserve is 15 percent of 280 (42.00), not 32 percent (89.60). An engine that ignores tacking fails on the reserve alone.",
+  "config": {
+    "lot_method": "FIFO",
+    "short_term_rate": 0.32,
+    "long_term_rate": 0.15,
+    "payment_schedule": "none"
+  },
+  "as_of": "2027-12-31",
+  "trades": [
+    {
+      "date": "2025-01-06",
+      "symbol": "EEE",
+      "side": "buy",
+      "qty": 10,
+      "price": 100.0
+    },
+    {
+      "date": "2026-06-01",
+      "symbol": "EEE",
+      "side": "sell",
+      "qty": 10,
+      "price": 90.0,
+      "exit_reason": "stop_loss"
+    },
+    {
+      "date": "2026-06-10",
+      "symbol": "EEE",
+      "side": "buy",
+      "qty": 10,
+      "price": 92.0
+    },
+    {
+      "date": "2027-01-05",
+      "symbol": "EEE",
+      "side": "sell",
+      "qty": 10,
+      "price": 130.0,
+      "exit_reason": "take_profit"
+    }
+  ],
+  "expected": {
+    "realized_gain": 280.0,
+    "disallowed_losses": [
+      {
+        "sell_date": "2026-06-01",
+        "symbol": "EEE",
+        "amount": 100.0
+      }
+    ],
+    "open_lots": [],
+    "tax_reserve": 42.0,
+    "blacklist": [],
+    "deferred_loss_balance": 0.0
+  }
+}

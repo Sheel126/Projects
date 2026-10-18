@@ -1,0 +1,57 @@
+{
+  "name": "wash_sale_defers_the_loss_it_does_not_destroy_it",
+  "description": "Buy 10000, sell 9000, rebuy 9200, sell 9500: net cash out is exactly 700, and once the position is fully closed with no replacement the allowed realized loss is exactly -700 even though 1000 was disallowed along the way. This fixture proves the engine total is economically correct.",
+  "config": {
+    "lot_method": "FIFO",
+    "short_term_rate": 0.32,
+    "payment_schedule": "none"
+  },
+  "as_of": "2026-12-31",
+  "trades": [
+    {
+      "date": "2026-05-01",
+      "symbol": "FFF",
+      "side": "buy",
+      "qty": 100,
+      "price": 100.0
+    },
+    {
+      "date": "2026-05-20",
+      "symbol": "FFF",
+      "side": "sell",
+      "qty": 100,
+      "price": 90.0,
+      "exit_reason": "stop_loss"
+    },
+    {
+      "date": "2026-06-15",
+      "symbol": "FFF",
+      "side": "buy",
+      "qty": 100,
+      "price": 92.0
+    },
+    {
+      "date": "2026-08-01",
+      "symbol": "FFF",
+      "side": "sell",
+      "qty": 100,
+      "price": 95.0,
+      "exit_reason": "take_profit"
+    }
+  ],
+  "expected": {
+    "realized_gain": -700.0,
+    "disallowed_losses": [
+      {
+        "sell_date": "2026-05-20",
+        "symbol": "FFF",
+        "amount": 1000.0
+      }
+    ],
+    "open_lots": [],
+    "tax_reserve": 0.0,
+    "carryforward": 0.0,
+    "deferred_loss_balance": 0.0,
+    "blacklist": []
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "name": "gain_and_loss_net_within_the_tax_year",
+  "description": "A January gain and a February loss in a different symbol net before the reserve is taken, so the reserve is 32 percent of 400 and not of 1000. Different symbols, so no wash sale - but the loss still blacklists its symbol for 31 days.",
+  "config": {
+    "lot_method": "FIFO",
+    "short_term_rate": 0.32,
+    "payment_schedule": "none"
+  },
+  "as_of": "2026-03-01",
+  "trades": [
+    {
+      "date": "2026-01-05",
+      "symbol": "AAA",
+      "side": "buy",
+      "qty": 100,
+      "price": 100.0
+    },
+    {
+      "date": "2026-01-20",
+      "symbol": "AAA",
+      "side": "sell",
+      "qty": 100,
+      "price": 110.0,
+      "exit_reason": "take_profit"
+    },
+    {
+      "date": "2026-02-02",
+      "symbol": "BBB",
+      "side": "buy",
+      "qty": 100,
+      "price": 50.0
+    },
+    {
+      "date": "2026-02-20",
+      "symbol": "BBB",
+      "side": "sell",
+      "qty": 100,
+      "price": 44.0,
+      "exit_reason": "stop_loss"
+    }
+  ],
+  "expected": {
+    "realized_gain": 400.0,
+    "disallowed_losses": [],
+    "open_lots": [],
+    "tax_reserve": 128.0,
+    "blacklist": [
+      {
+        "symbol": "BBB",
+        "until": "2026-03-23"
+      }
+    ]
+  }
+}

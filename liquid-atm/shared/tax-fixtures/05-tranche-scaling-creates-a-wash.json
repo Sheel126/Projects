@@ -1,0 +1,56 @@
+{
+  "name": "tranche_scaling_creates_a_wash_then_recovers_it",
+  "description": "Lesson 02 section 6: two tranches, the stop takes out tranche A at a loss, tranche B was bought 5 days earlier and absorbs the disallowed loss. When B is later sold at a profit the raised basis gives the loss back, so the full-cycle realized gain equals the economics (500 dollars net).",
+  "config": {
+    "lot_method": "FIFO",
+    "short_term_rate": 0.32,
+    "payment_schedule": "none"
+  },
+  "as_of": "2026-12-31",
+  "trades": [
+    {
+      "date": "2026-04-01",
+      "symbol": "AAPL",
+      "side": "buy",
+      "qty": 50,
+      "price": 200.0
+    },
+    {
+      "date": "2026-04-06",
+      "symbol": "AAPL",
+      "side": "buy",
+      "qty": 50,
+      "price": 210.0
+    },
+    {
+      "date": "2026-04-10",
+      "symbol": "AAPL",
+      "side": "sell",
+      "qty": 50,
+      "price": 190.0,
+      "exit_reason": "stop_loss"
+    },
+    {
+      "date": "2026-06-01",
+      "symbol": "AAPL",
+      "side": "sell",
+      "qty": 50,
+      "price": 230.0,
+      "exit_reason": "take_profit"
+    }
+  ],
+  "expected": {
+    "realized_gain": 500.0,
+    "disallowed_losses": [
+      {
+        "sell_date": "2026-04-10",
+        "symbol": "AAPL",
+        "amount": 500.0
+      }
+    ],
+    "open_lots": [],
+    "tax_reserve": 160.0,
+    "blacklist": [],
+    "deferred_loss_balance": 0.0
+  }
+}

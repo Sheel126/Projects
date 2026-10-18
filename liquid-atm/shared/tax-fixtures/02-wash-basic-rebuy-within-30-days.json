@@ -1,0 +1,60 @@
+{
+  "name": "wash_sale_basic_rebuy_within_30_days",
+  "description": "Loss sale followed by a repurchase 10 days later: the loss is disallowed, added to the new lot basis, and the new lot inherits the 18-day holding period (IRC 1091(d)). This is the worked example in the fixtures README.",
+  "config": {
+    "lot_method": "FIFO",
+    "tax_reserve_rate": 0.3,
+    "payment_schedule": "none"
+  },
+  "trades": [
+    {
+      "date": "2026-03-02",
+      "symbol": "XYZ",
+      "side": "buy",
+      "qty": 10,
+      "price": 100.0
+    },
+    {
+      "date": "2026-03-20",
+      "symbol": "XYZ",
+      "side": "sell",
+      "qty": 10,
+      "price": 90.0,
+      "exit_reason": "stop_loss"
+    },
+    {
+      "date": "2026-03-30",
+      "symbol": "XYZ",
+      "side": "buy",
+      "qty": 10,
+      "price": 92.0
+    }
+  ],
+  "expected": {
+    "realized_gain": 0.0,
+    "disallowed_losses": [
+      {
+        "sell_date": "2026-03-20",
+        "symbol": "XYZ",
+        "amount": 100.0
+      }
+    ],
+    "open_lots": [
+      {
+        "symbol": "XYZ",
+        "qty": 10,
+        "cost_basis": 1020.0,
+        "acquired": "2026-03-30",
+        "holding_period_start": "2026-03-12"
+      }
+    ],
+    "tax_reserve": 0.0,
+    "blacklist": [
+      {
+        "symbol": "XYZ",
+        "until": "2026-04-20"
+      }
+    ],
+    "deferred_loss_balance": 100.0
+  }
+}
