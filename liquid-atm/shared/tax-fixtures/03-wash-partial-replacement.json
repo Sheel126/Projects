@@ -1,0 +1,60 @@
+{
+  "name": "wash_sale_partial_replacement",
+  "description": "Sell 100 at a 500 dollar loss, replace only 40 shares. Matching is share for share, so exactly 40 percent of the loss (200) is disallowed and 300 stays deductible now.",
+  "config": {
+    "lot_method": "FIFO",
+    "short_term_rate": 0.32,
+    "payment_schedule": "none"
+  },
+  "trades": [
+    {
+      "date": "2026-03-02",
+      "symbol": "ABC",
+      "side": "buy",
+      "qty": 100,
+      "price": 50.0
+    },
+    {
+      "date": "2026-03-20",
+      "symbol": "ABC",
+      "side": "sell",
+      "qty": 100,
+      "price": 45.0,
+      "exit_reason": "stop_loss"
+    },
+    {
+      "date": "2026-03-25",
+      "symbol": "ABC",
+      "side": "buy",
+      "qty": 40,
+      "price": 46.0
+    }
+  ],
+  "expected": {
+    "realized_gain": -300.0,
+    "disallowed_losses": [
+      {
+        "sell_date": "2026-03-20",
+        "symbol": "ABC",
+        "amount": 200.0
+      }
+    ],
+    "open_lots": [
+      {
+        "symbol": "ABC",
+        "qty": 40,
+        "cost_basis": 2040.0,
+        "acquired": "2026-03-25",
+        "holding_period_start": "2026-03-07"
+      }
+    ],
+    "tax_reserve": 0.0,
+    "blacklist": [
+      {
+        "symbol": "ABC",
+        "until": "2026-04-20"
+      }
+    ],
+    "deferred_loss_balance": 200.0
+  }
+}

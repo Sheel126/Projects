@@ -1,0 +1,14 @@
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+*.egg-info/
+target/
+.idea/
+.vscode/
+data/cache/
+
+# The monorepo's root .gitignore ignores data/ and *.properties; re-include our source and the Maven wrapper.
+!quant/src/liquid_atm_quant/data/
+!orchestrator/.mvn/wrapper/maven-wrapper.properties

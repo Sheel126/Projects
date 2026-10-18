@@ -1,0 +1,35 @@
+{
+  "name": "simple_short_term_gain",
+  "description": "Baseline: one round trip at a profit, no wash sale. Pins fee-free basis, short-term classification and the reserve rate.",
+  "config": {
+    "lot_method": "FIFO",
+    "short_term_rate": 0.32,
+    "payment_schedule": "none"
+  },
+  "trades": [
+    {
+      "date": "2026-03-02",
+      "symbol": "XYZ",
+      "side": "buy",
+      "qty": 10,
+      "price": 100.0
+    },
+    {
+      "date": "2026-06-01",
+      "symbol": "XYZ",
+      "side": "sell",
+      "qty": 10,
+      "price": 120.0,
+      "exit_reason": "take_profit"
+    }
+  ],
+  "expected": {
+    "realized_gain": 200.0,
+    "disallowed_losses": [],
+    "open_lots": [],
+    "tax_reserve": 64.0,
+    "blacklist": [],
+    "carryforward": 0.0,
+    "deferred_loss_balance": 0.0
+  }
+}

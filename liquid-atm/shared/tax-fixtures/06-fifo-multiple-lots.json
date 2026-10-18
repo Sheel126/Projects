@@ -1,0 +1,62 @@
+{
+  "name": "fifo_partial_sell_across_three_lots",
+  "description": "Selling 150 of 300 shares consumes lot 1 whole and half of lot 2, leaving lot 2 with exactly half its basis and lot 3 untouched. No losses, so no wash.",
+  "config": {
+    "lot_method": "FIFO",
+    "short_term_rate": 0.32,
+    "payment_schedule": "none"
+  },
+  "trades": [
+    {
+      "date": "2026-01-05",
+      "symbol": "MSFT",
+      "side": "buy",
+      "qty": 100,
+      "price": 300.0
+    },
+    {
+      "date": "2026-02-05",
+      "symbol": "MSFT",
+      "side": "buy",
+      "qty": 100,
+      "price": 320.0
+    },
+    {
+      "date": "2026-03-05",
+      "symbol": "MSFT",
+      "side": "buy",
+      "qty": 100,
+      "price": 340.0
+    },
+    {
+      "date": "2026-09-01",
+      "symbol": "MSFT",
+      "side": "sell",
+      "qty": 150,
+      "price": 360.0,
+      "exit_reason": "take_profit"
+    }
+  ],
+  "expected": {
+    "realized_gain": 8000.0,
+    "disallowed_losses": [],
+    "open_lots": [
+      {
+        "symbol": "MSFT",
+        "qty": 50,
+        "cost_basis": 16000.0,
+        "acquired": "2026-02-05",
+        "holding_period_start": "2026-02-05"
+      },
+      {
+        "symbol": "MSFT",
+        "qty": 100,
+        "cost_basis": 34000.0,
+        "acquired": "2026-03-05",
+        "holding_period_start": "2026-03-05"
+      }
+    ],
+    "tax_reserve": 2560.0,
+    "blacklist": []
+  }
+}

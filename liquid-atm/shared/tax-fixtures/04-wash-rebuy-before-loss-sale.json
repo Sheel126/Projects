@@ -1,0 +1,60 @@
+{
+  "name": "wash_sale_replacement_bought_before_the_sale",
+  "description": "The side a 31-day blacklist cannot prevent: a second purchase 10 days BEFORE the loss sale is replacement stock, so the FIFO loss on the older lot is disallowed into the newer lot basis.",
+  "config": {
+    "lot_method": "FIFO",
+    "short_term_rate": 0.32,
+    "payment_schedule": "none"
+  },
+  "trades": [
+    {
+      "date": "2026-03-02",
+      "symbol": "XYZ",
+      "side": "buy",
+      "qty": 10,
+      "price": 100.0
+    },
+    {
+      "date": "2026-03-10",
+      "symbol": "XYZ",
+      "side": "buy",
+      "qty": 10,
+      "price": 95.0
+    },
+    {
+      "date": "2026-03-20",
+      "symbol": "XYZ",
+      "side": "sell",
+      "qty": 10,
+      "price": 90.0,
+      "exit_reason": "stop_loss"
+    }
+  ],
+  "expected": {
+    "realized_gain": 0.0,
+    "disallowed_losses": [
+      {
+        "sell_date": "2026-03-20",
+        "symbol": "XYZ",
+        "amount": 100.0
+      }
+    ],
+    "open_lots": [
+      {
+        "symbol": "XYZ",
+        "qty": 10,
+        "cost_basis": 1050.0,
+        "acquired": "2026-03-10",
+        "holding_period_start": "2026-02-20"
+      }
+    ],
+    "tax_reserve": 0.0,
+    "blacklist": [
+      {
+        "symbol": "XYZ",
+        "until": "2026-04-20"
+      }
+    ],
+    "deferred_loss_balance": 100.0
+  }
+}
