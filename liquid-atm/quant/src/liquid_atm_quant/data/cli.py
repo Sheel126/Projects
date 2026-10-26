@@ -7,6 +7,7 @@
   python -m liquid_atm_quant.data.cli bars [--start 2016-01-04] [--symbols AAPL,MSFT]
   python -m liquid_atm_quant.data.cli yf-backfill
   python -m liquid_atm_quant.data.cli edgar
+  python -m liquid_atm_quant.data.cli fundamentals [--start 2014-01-01]   # SEC XBRL company facts
   python -m liquid_atm_quant.data.cli delistings | dq | coverage | crosscheck
   python -m liquid_atm_quant.data.cli daily        # calendar -> universe -> bars -> dq
 """
@@ -17,13 +18,14 @@ import random
 import sys
 import uuid
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 
 import httpx
 import psycopg
 
 from liquid_atm_quant.config import Settings, get_settings
 from liquid_atm_quant.data import coverage as cov
-from liquid_atm_quant.data import db, edgar, quality, universe, yahoo
+from liquid_atm_quant.data import db, edgar, fundamentals, quality, universe, yahoo
 from liquid_atm_quant.data.alpaca_data import AlpacaData
 from liquid_atm_quant.data.coverage import ALPACA_HISTORY_START
 from liquid_atm_quant.infra.rate_limiter import alpaca_limiter, edgar_limiter, yfinance_limiter
@@ -32,7 +34,11 @@ from liquid_atm_quant.infra.redis_client import make_redis
 log = logging.getLogger("data")
 
 # Benchmarks and regime inputs (lesson 01 §1). ^VIX comes from Yahoo; the rest from Alpaca.
-ETFS = ["SPY", "QQQ", "IWM", "DIA", "XLB", "XLC", "XLE", "XLF", "XLI", "XLK", "XLP", "XLRE", "XLU", "XLV", "XLY"]
+ETFS = ["SPY", "QQQ", "IWM", "DIA", "XLB", "XLC", "XLE", "XLF", "XLI", "XLK", "XLP", "XLRE", "XLU", "XLV", "XLY",
+        # Cross-asset sleeves for the Phase 3b trend and All-Weather strategies (lesson 03b §4).
+        *["TLT", "IEF", "SHY", "TIP", "LQD", "GLD", "DBC", "EFA", "EEM", "VNQ"],
+        # Daily-reset 2x/3x S&P 500 and T-bills for the Phase 3c exposure strategies (lesson 03c §4).
+        *["SSO", "UPRO", "BIL", "AGG", "VTI"]]
 VIX = "^VIX"
 YF_HISTORY_START = date(2005, 1, 3)
 
@@ -150,6 +156,31 @@ def edgar_sync(conn: psycopg.Connection, settings: Settings, since: date) -> Non
     log.info("sec filings stored: %d", stored)
 
 
+FUNDAMENTALS_ARCHIVE = Path(__file__).resolve().parents[4] / "data" / "cache" / "sec" / "companyfacts.zip"
+
+
+def fundamentals_sync(conn: psycopg.Connection, settings: Settings, since: date) -> None:
+    """Point-in-time fundamentals for every index member since `since` (lesson 03b §2).
+
+    The 1.4 GB archive is downloaded once into data/cache/ (git-ignored); delete it to refresh.
+    """
+    if not FUNDAMENTALS_ARCHIVE.exists():
+        FUNDAMENTALS_ARCHIVE.parent.mkdir(parents=True, exist_ok=True)
+        log.info("downloading %s", fundamentals.COMPANYFACTS_URL)
+        partial = FUNDAMENTALS_ARCHIVE.with_suffix(".part")
+        with httpx.stream("GET", fundamentals.COMPANYFACTS_URL, timeout=600, follow_redirects=True,
+                          headers={"User-Agent": settings.sec_user_agent}) as resp:
+            resp.raise_for_status()
+            with partial.open("wb") as fh:
+                for chunk in resp.iter_bytes(1 << 20):
+                    fh.write(chunk)
+        partial.rename(FUNDAMENTALS_ARCHIVE)
+    client = edgar.Edgar(settings.sec_user_agent, edgar_limiter(make_redis(settings)))
+    ticker_map = {ticker: cik for cik, ticker, _ in client.company_tickers()}
+    stats = fundamentals.sync(conn, FUNDAMENTALS_ARCHIVE, since, ticker_map)
+    log.info("fundamentals: %s", stats)
+
+
 def delistings(conn: psycopg.Connection, settings: Settings) -> None:
     log.info("instruments marked delisted: %d", quality.mark_delistings(conn))
 
@@ -203,7 +234,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="liquid-atm-data", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("job", choices=["sync-calendar", "sync-assets", "universe-live", "universe-history",
-                                        "bars", "yf-backfill", "edgar", "delistings", "dq", "coverage",
+                                        "bars", "yf-backfill", "edgar", "fundamentals", "delistings", "dq", "coverage",
                                         "crosscheck", "daily"])
     parser.add_argument("--start", type=date.fromisoformat, default=ALPACA_HISTORY_START)
     parser.add_argument("--symbols", help="comma-separated override for the bars job")
@@ -228,6 +259,8 @@ def main(argv: list[str] | None = None) -> int:
                 yf_backfill(conn, settings)
             case "edgar":
                 edgar_sync(conn, settings, args.start)
+            case "fundamentals":
+                fundamentals_sync(conn, settings, min(args.start, date(2014, 1, 1)))
             case "delistings":
                 delistings(conn, settings)
             case "dq":

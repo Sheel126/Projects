@@ -16,6 +16,7 @@ A tax-aware, momentum swing-trading bot for highly liquid US equities and large 
 | `orchestrator/` | owns the DB schema (Flyway), and later the OMS, tax ledger and kill switches. The **only** component that moves money | Java 17, Spring Boot 3.5 |
 | `db/init/` | one-time Postgres init (pgvector) | SQL |
 | `quant/.../strategy/` | Phase 3 funnel: params, causal indicators, regime, screener, book | Python |
+| `quant/.../investors/` | Phase 3b: eight famous-investor methods as rules, on point-in-time SEC fundamentals | Python |
 | `shared/tax-fixtures/` | 13 golden test vectors that both tax engines must pass | JSON |
 | `docs/lessons/` | the *why* behind each phase; read these first | Markdown |
 
@@ -64,6 +65,25 @@ cd quant
 
 Funnel runs refuse to go past 2024-09-30 (the lockbox) without `--unlock-lockbox`.
 
+### Investor strategies (Phase 3b)
+
+```bash
+cd quant
+.venv/Scripts/python -m liquid_atm_quant.data.cli fundamentals            # SEC XBRL facts (1.4 GB, cached)
+.venv/Scripts/python scripts/factor_prescreen.py --history                # free big-stock factor check
+.venv/Scripts/python scripts/run_investors.py --save --json ../docs/phase3b/results.json
+```
+
+### Research screen and exposure strategies (Phase 3c)
+
+```bash
+cd quant
+.venv/Scripts/python scripts/research_screen.py --fetch          # free 1960+ series, cached
+.venv/Scripts/python scripts/research_screen.py                  # published rules on 1960-2015: no trials
+.venv/Scripts/python scripts/research_screen.py --calibrate      # synthetic 2x vs real SSO
+.venv/Scripts/python scripts/run_investors.py --only vol_trend --save --label phase3c
+```
+
 ## Phase status
 
 - [x] **Phase 0: Foundations.** Compose stack, baseline schema, Redis Lua sliding-window rate limiter, GPU semaphore, local-LLM gateway, Alpaca paper probe.
@@ -80,6 +100,20 @@ Funnel runs refuse to go past 2024-09-30 (the lockbox) without `--unlock-lockbox
   are enforced. **Gate failed in sample:** −0.12R per trade. The breakout trigger selects
   short-term reversal (`docs/phase3/strategy-report.md`). The phase also fixed an engine defect
   that held acquired companies forever.
+- [ ] **Phase 3b: Investor strategies.** Point-in-time SEC fundamentals, cross-asset ETFs, and
+  eight pre-registered strategies (Buffett, Greenblatt, Lynch, CANSLIM, Templeton, Turtle,
+  All-Weather, quality + trend). **None passes the in-sample gate.** As the factor pre-screen
+  predicted, quality led, but equal weighting cost about 3 points a year in the mega-cap era.
+  Trend-following was the only strategy within the 15% drawdown limit. 10 of 20 trials used
+  (`docs/phase3b/strategy-report.md`).
+- [ ] **Phase 3c: Research and exposure management.** The three proposed follow-ups, then
+  published rules (Faber, Gayed & Bilello, Moreira & Muir, Keller VAA, Antonacci) screened on
+  1960-2015 at no trial cost, and the winners run in sample. **`vol_trend` (volatility target ×
+  200-day filter, SPY/SSO/T-bills) passes 3 of 4 checks**: −19.2% max drawdown and a Calmar of
+  0.45 vs SPY's 0.43, but 8.6%/yr after tax vs 14.4%. A taxable timing strategy pays an effective
+  27-35% tax, much of it through wash sales FIFO creates. The gate needs an after-tax Calmar of
+  0.72, which no published long-only rule reaches. Awaiting a decision on the objective. 17 of 20
+  trials used (`docs/phase3c/strategy-report.md`).
 - [ ] Phase 4: validation (walk-forward, CPCV, after-tax metrics). **Go/no-go**
 - [ ] Phase 5: local-LLM catalyst gate
 - [ ] Phase 6: Java orchestrator (OMS, ledger, blacklist, December flush)

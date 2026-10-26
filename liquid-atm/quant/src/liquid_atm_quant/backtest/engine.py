@@ -141,8 +141,13 @@ class Backtester:
         # calendar), not news about any one security, so it never counts toward a delisting.
         self._market_printed = np.isfinite(self.panel.column("close")).any(axis=1)
 
-    def run(self, strategy: Strategy) -> BacktestResult:
+    def run(self, strategy: Strategy, start: date | None = None) -> BacktestResult:
+        """`start`: the first session traded. Sessions before it are warm-up history the strategy
+        can read (a 200-day average needs 200 days) but that never trade or enter the equity curve.
+        """
         cfg = self.config
+        t0 = 0 if start is None else next(
+            (i for i, s in enumerate(self.panel.sessions) if s >= start), len(self.panel.sessions))
         portfolio = Portfolio(cash=cents(cfg.initial_cash))
         ledger = TaxLedger(cfg.tax)
         pending_entries: list[PendingEntry] = []
@@ -158,6 +163,8 @@ class Backtester:
         tax_paid = ZERO
 
         for t, session in enumerate(self.panel.sessions):
+            if t < t0:
+                continue
             view = self.panel.view(t)
 
             # ---- 1. exits ----------------------------------------------------------
@@ -533,9 +540,9 @@ def run_hash(config: BacktestConfig, strategy: Strategy) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 
-def run_backtest(panel: Panel, strategy: Strategy,
-                 config: BacktestConfig | None = None) -> BacktestResult:
-    return Backtester(panel, config).run(strategy)
+def run_backtest(panel: Panel, strategy: Strategy, config: BacktestConfig | None = None,
+                 start: date | None = None) -> BacktestResult:
+    return Backtester(panel, config).run(strategy, start)
 
 
 __all__ = ["BacktestConfig", "BacktestResult", "Backtester", "TradeRecord", "run_backtest",
