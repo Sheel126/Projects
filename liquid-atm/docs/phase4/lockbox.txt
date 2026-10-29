@@ -1,0 +1,13 @@
+
+=== Lockbox 2024-10-01 .. 2026-10-28 (521 sessions)
+  vol_trend_noise       103,182  CAGR   2.00%  maxDD  -15.3%  Calmar  0.13  Sharpe  0.21  tax     6,164
+  vol_trend             112,903  CAGR   6.46%  maxDD   -9.1%  Calmar  0.71  Sharpe  0.58  tax     3,017
+  spy                   133,167  CAGR  17.12%  maxDD  -18.8%  Calmar  0.91  Sharpe  1.05  tax       431
+  FAIL  check_2_beats_spy        {"value": 103182.20999999999, "spy": 133166.64}
+  FAIL  check_3_drawdown         {"max_drawdown": -0.15293467313067322, "threshold": -0.15}
+  FAIL  check_4_overlay_adds     {"value": 103182.20999999999, "vol_trend_alone": 112903.39}
+  2024: vol_trend_noise +5.0%  vol_trend +2.2%  spy +3.5%
+  2025: vol_trend_noise +1.0%  vol_trend +6.1%  spy +17.5%
+  2026: vol_trend_noise -1.7%  vol_trend +5.0%  spy +14.0%
+
+  continuous 2016 .. end: vol_trend_noise 374,998 (DD -14.9%) vs SPY 398,321 (DD -33.9%)

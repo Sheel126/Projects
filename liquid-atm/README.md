@@ -98,6 +98,16 @@ cd quant
 .venv/Scripts/python scripts/orb_diagnostic.py                   # how much of ORB is fill assumptions
 ```
 
+### Validation (Phase 4)
+
+```bash
+cd quant
+.venv/Scripts/python scripts/run_phase4.py fetch                 # ETFs + SPY minutes through today
+.venv/Scripts/python scripts/run_phase4.py insample --json ../docs/phase4/insample.json
+.venv/Scripts/python scripts/run_phase4.py lockbox --unlock-lockbox   # once: already spent
+.venv/Scripts/python scripts/lockbox_diagnostic.py               # Noise Band before/after the lockbox
+```
+
 ## Phase status
 
 - [x] **Phase 0: Foundations.** Compose stack, baseline schema, Redis Lua sliding-window rate limiter, GPU semaphore, local-LLM gateway, Alpaca paper probe.
@@ -139,7 +149,13 @@ cd quant
   every stock strategy: splits were not applied to held positions, and an empty Russell 1000
   snapshot emptied the universe from Feb to Jul 2017. Phases 3-3c, re-run on the fixes, still
   fail. 24 of 25 trials used (`docs/phase3d/strategy-report.md`).
-- [ ] Phase 4: validation (walk-forward, CPCV, after-tax metrics). **Go/no-go**
+- [x] **Phase 4: Validation. NO-GO.** `vol_trend_noise`'s checks were pre-registered and
+  committed before anything ran (`docs/phase4/preregistration.md`). In sample, its Deflated Sharpe
+  over 24 trials was 0.00 (needs 0.95). PBO was 16.9%, and the bootstrap gave a 60% chance of
+  beating SPY. The lockbox (2024-10 to 2026-10) was then opened once, for information. After tax:
+  $103,182 vs SPY's $133,167, max drawdown −15.3%, and the overlay subtracted value compared with
+  `vol_trend` alone. The Noise Band earned +18%/yr before its May 2024 publication and −0.6%/yr
+  after. 24 of 25 trials used; the lockbox is spent (`docs/phase4/validation-report.md`).
 - [ ] Phase 5: local-LLM catalyst gate
 - [ ] Phase 6: Java orchestrator (OMS, ledger, blacklist, December flush)
 - [ ] Phase 7: risk controls and observability
