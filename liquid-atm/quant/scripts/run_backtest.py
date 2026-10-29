@@ -8,7 +8,7 @@
     python scripts/run_backtest.py --strategy funnel --param stop_atr=2.5   # one more trial
 
 Any run that includes the funnel stops before the lockbox (2024-10-01) unless `--unlock-lockbox`
-is passed, and prints how many of the 20-trial budget have been used (lesson 03 §1).
+is passed, and prints how much of the trial budget have been used (lesson 03 §1).
 
 The gate: SPY buy-and-hold through this engine must reproduce SPY's actual CAGR and max drawdown
 for the window. If it does not, the engine is wrong and nothing downstream means anything

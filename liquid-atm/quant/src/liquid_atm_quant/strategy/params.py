@@ -1,7 +1,7 @@
 """Every number in lesson 03, written down before the first backtest of the funnel (§1).
 
 Changing any field changes `fingerprint()`, and through it the run hash that Phase 4 counts as a
-trial. That is the point: a "quick tweak" is not free, it is one of the 20.
+trial. That is the point: a "quick tweak" is not free, it is one of the budget.
 """
 
 import hashlib
@@ -12,7 +12,10 @@ from datetime import date
 LOCKBOX_START = date(2024, 10, 1)
 """Phase 3 never runs a session on or after this date (lesson 03 §1)."""
 
-TRIAL_BUDGET = 20
+TRIAL_BUDGET = 25
+"""Raised from 20 to 25 on 2026-10-29, before any Phase 3d run, at the user's decision
+(lesson 03d §1). Phase 4's Deflated Sharpe uses the number of trials actually run, so the raise
+is paid for there."""
 
 SECTOR_ETFS = {
     "XLB": "Materials", "XLC": "Communication", "XLE": "Energy", "XLF": "Financials",

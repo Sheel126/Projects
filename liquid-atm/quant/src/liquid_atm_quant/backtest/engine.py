@@ -17,6 +17,7 @@ import logging
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from decimal import Decimal
+from fractions import Fraction
 
 import numpy as np
 import pandas as pd
@@ -32,6 +33,9 @@ from liquid_atm_quant.tax.lots import ExitReason
 from liquid_atm_quant.tax.money import ZERO, cents, money, qty as as_qty
 
 log = logging.getLogger("backtest")
+
+SPLIT_THRESHOLD = 1.2
+"""An overnight move in the adjustment factor this large (either way) is a split, not a dividend."""
 
 
 @dataclass(frozen=True)
@@ -159,13 +163,33 @@ class Backtester:
         counters = {"entries_filled": 0, "entries_expired": 0, "touch_fills": 0,
                     "exits": 0, "ambiguous_exits": 0, "adv_capped": 0, "cash_capped": 0,
                     "blacklist_blocked": 0, "flush_exits": 0, "dividends": 0,
-                    "strict_rejected": 0, "delisted_exits": 0}
+                    "strict_rejected": 0, "delisted_exits": 0, "splits": 0}
         tax_paid = ZERO
 
         for t, session in enumerate(self.panel.sessions):
             if t < t0:
                 continue
             view = self.panel.view(t)
+
+            # ---- 0. splits ---------------------------------------------------------
+            for position in portfolio.positions.values():
+                ratio = self._split_ratio(t, position.symbol)
+                if ratio is None or self._segment(t, position.symbol) != position.segment:
+                    continue
+                self._split(position, ratio, ledger, open_trades, marks, session)
+                counters["splits"] += 1
+            # Orders placed last night were sized in pre-split shares and prices.
+            for order in pending_markets:
+                ratio = self._split_ratio(t, order.symbol)
+                if ratio is not None:
+                    order.qty = self._whole(order.qty * ratio)
+            for order in pending_entries:
+                ratio = self._split_ratio(t, order.symbol)
+                if ratio is not None:
+                    order.qty = self._whole(order.qty * ratio)
+                    order.limit = cents(order.limit / ratio)
+                    order.take_profit = cents(order.take_profit / ratio)
+                    order.stop_loss = cents(order.stop_loss / ratio)
 
             # ---- 1. exits ----------------------------------------------------------
             for position in list(portfolio.positions.values()):
@@ -383,6 +407,57 @@ class Backtester:
         return Bar(float(o), float(self.panel.arrays["high"][t, j]),
                    float(self.panel.arrays["low"][t, j]), float(self.panel.arrays["close"][t, j]),
                    float(self.panel.arrays["volume"][t, j]))
+
+    def _split_ratio(self, t: int, symbol: str) -> Decimal | None:
+        """Shares received per share held if `symbol` split overnight into session `t`.
+
+        Read off the `adj_factor` path (adjusted / raw close): a 2-for-1 doubles it overnight, a
+        1-for-10 reverse split cuts it to a tenth. An ordinary dividend moves it by a few percent, so
+        anything under 20% is not a split. A split is also a *clean* ratio (2, 3/2, 1/10): a jump
+        more than 0.5% away from the nearest small fraction is a special dividend (Albertsons paid
+        a quarter of its price in January 2023), which changes no share count."""
+        j = self.panel.index.get(symbol)
+        if j is None or t == 0:
+            return None
+        f = self.panel.arrays["adj_factor"]
+        before, now = f[t - 1, j], f[t, j]
+        if not (np.isfinite(before) and np.isfinite(now)) or before <= 0 or now <= 0:
+            return None
+        ratio = now / before
+        if 1 / SPLIT_THRESHOLD < ratio < SPLIT_THRESHOLD:
+            return None
+        snapped = Fraction(ratio).limit_denominator(10)
+        if abs(ratio / float(snapped) - 1) > 0.005:
+            return None
+        return Decimal(snapped.numerator) / Decimal(snapped.denominator)
+
+    def _whole(self, quantity: Decimal) -> Decimal:
+        return as_qty(quantity) if self.config.allow_fractional else as_qty(int(quantity))
+
+    def _split(self, position: Position, ratio: Decimal, ledger: TaxLedger,
+               open_trades: dict, marks: dict, session: date) -> None:
+        """Restate a held position for a split: more shares, lower prices, same money.
+
+        Without this a 4-for-1 looks like a 75% loss: the position is marked at a quarter of its
+        value, a rebalancer buys the "dip", and a sale books a loss that never happened."""
+        ledger.split(session, position.symbol, ratio)
+        # The ledger's lots are the share count of record; the position mirrors their sum so a
+        # later full exit sells exactly what the lots hold.
+        held = sum((lot.qty_remaining for lot in ledger.book.open_lots(position.symbol)), ZERO)
+        position.qty = held
+        position.entry_price = position.entry_price / ratio
+        if position.take_profit is not None:
+            position.take_profit = cents(position.take_profit / ratio)
+        if position.stop_loss is not None:
+            position.stop_loss = cents(position.stop_loss / ratio)
+        if position.symbol in marks:
+            marks[position.symbol] = marks[position.symbol] / ratio
+        record = open_trades.get(position.symbol)
+        if record is not None:
+            record.qty = as_qty(record.qty * ratio)
+            record.entry_price = record.entry_price / ratio
+            if record.risk_per_share is not None:
+                record.risk_per_share = record.risk_per_share / ratio
 
     def _segment(self, t: int, symbol: str) -> int:
         j = self.panel.index.get(symbol)

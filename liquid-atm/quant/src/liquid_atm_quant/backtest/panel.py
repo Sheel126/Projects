@@ -33,6 +33,9 @@ _SESSIONS_SQL = """
 
 # Point-in-time membership: the latest snapshot that existed at or before each session
 # (lesson 01 §3). Never the nearest snapshot, which would be look-ahead.
+# A snapshot with no members is a failed scrape, not an empty index: the Wayback copy of iShares'
+# 2017-01-31 holdings page parsed to nothing, and carrying it forward emptied the Russell 1000
+# from February to July 2017 for every strategy before Phase 3d (lesson 03d §9).
 _MEMBERSHIP_SQL = """
     WITH sessions AS (
         SELECT trade_date FROM trading_calendar
@@ -40,7 +43,8 @@ _MEMBERSHIP_SQL = """
     effective AS (
         SELECT s.trade_date,
                (SELECT max(x.as_of_date) FROM universe_snapshots x
-                WHERE x.index_name = %(index_name)s AND x.as_of_date <= s.trade_date) AS as_of_date
+                WHERE x.index_name = %(index_name)s AND x.as_of_date <= s.trade_date
+                  AND x.member_count > 0) AS as_of_date
         FROM sessions s)
     SELECT e.trade_date, m.symbol
     FROM effective e

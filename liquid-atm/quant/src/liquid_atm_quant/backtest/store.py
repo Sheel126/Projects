@@ -4,12 +4,14 @@ Same convention as the Phase 1 data layer: functions take an open connection and
 the caller owns the transaction and a failed write leaves nothing half-stored.
 """
 
+import hashlib
 import json
 import math
 import subprocess
 from dataclasses import asdict
 from datetime import date
 
+import pandas as pd
 import psycopg
 
 from liquid_atm_quant.backtest.engine import BacktestResult
@@ -95,6 +97,45 @@ def save(conn: psycopg.Connection, result: BacktestResult, label: str | None = N
                           t.disallowed_loss, t.is_long_term, t.reason,
                           None if t.r_multiple is None else round(t.r_multiple, 4))
                          for t in result.trades])
+    return run_id
+
+
+def params_hash(params: dict) -> str:
+    """The trial identity of a strategy that does not run through the daily engine."""
+    payload = json.dumps(params, sort_keys=True, default=str)
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
+def save_report(conn: psycopg.Connection, strategy: str, params: dict, report_: dict,
+                equity: pd.DataFrame, label: str | None = None) -> int:
+    """Store a Phase 3d run that was not produced by `Backtester` (intraday, lesson 03d §3).
+
+    `equity` needs `equity`, `reserve`, `equity_after_tax` and `tax_paid_cum` columns. An intraday
+    book is flat every night, so cash is the whole equity and there are no positions to report.
+    """
+    config_hash = params_hash(params)
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO backtest_runs (strategy, label, config_hash, config, git_rev, start_date,
+                                       end_date, initial_cash, final_equity,
+                                       final_equity_after_tax, post_liquidation_value, metrics,
+                                       diagnostics)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id""",
+                    (strategy, label, config_hash, to_json(params), git_revision(),
+                     equity.index[0], equity.index[-1], params.get("initial_cash", 100000.0),
+                     float(equity["equity"].iloc[-1]), float(equity["equity_after_tax"].iloc[-1]),
+                     report_["post_liquidation_value"], to_json(report_),
+                     to_json(report_.get("diagnostics", {}))))
+        run_id = cur.fetchone()[0]
+        with cur.copy("COPY backtest_equity (run_id, trade_date, cash, positions_value, equity, "
+                      "tax_reserve, equity_after_tax, tax_paid_cum, n_positions) "
+                      "FROM STDIN") as copy:
+            for trade_date, row in equity.iterrows():
+                copy.write_row((run_id, trade_date, round(row["equity"], 2), 0,
+                                round(row["equity"], 2), round(row["reserve"], 2),
+                                round(row["equity_after_tax"], 2), round(row["tax_paid_cum"], 2),
+                                0))
     return run_id
 
 

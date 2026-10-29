@@ -16,7 +16,8 @@ A tax-aware, momentum swing-trading bot for highly liquid US equities and large 
 | `orchestrator/` | owns the DB schema (Flyway), and later the OMS, tax ledger and kill switches. The **only** component that moves money | Java 17, Spring Boot 3.5 |
 | `db/init/` | one-time Postgres init (pgvector) | SQL |
 | `quant/.../strategy/` | Phase 3 funnel: params, causal indicators, regime, screener, book | Python |
-| `quant/.../investors/` | Phase 3b: eight famous-investor methods as rules, on point-in-time SEC fundamentals | Python |
+| `quant/.../investors/` | Phase 3b: eight famous-investor methods as rules, on point-in-time SEC fundamentals; Phase 3d: insider and 13F copying | Python |
+| `quant/.../intraday/` | Phase 3d: minute bars, the after-tax intraday account, Noise Band, ORB, first-candle FVG | Python |
 | `shared/tax-fixtures/` | 13 golden test vectors that both tax engines must pass | JSON |
 | `docs/lessons/` | the *why* behind each phase; read these first | Markdown |
 
@@ -84,6 +85,19 @@ cd quant
 .venv/Scripts/python scripts/run_investors.py --only vol_trend --save --label phase3c
 ```
 
+### Copying and intraday strategies (Phase 3d)
+
+```bash
+cd quant
+.venv/Scripts/python scripts/fetch_minutes.py SPY                # 1-minute SPY 2016..2024-09 (Alpaca, free)
+.venv/Scripts/python scripts/fetch_minutes.py --orb-opening --orb-days   # stocks-in-play data
+.venv/Scripts/python -m liquid_atm_quant.data.cli insiders       # SEC Form 4 open-market trades
+.venv/Scripts/python -m liquid_atm_quant.data.cli form13f        # SEC 13F holdings
+.venv/Scripts/python scripts/run_phase3d.py --save --json ../docs/phase3d/results.json
+.venv/Scripts/python scripts/noise_sensitivity.py                # costs x2/x4, sub-periods: not trials
+.venv/Scripts/python scripts/orb_diagnostic.py                   # how much of ORB is fill assumptions
+```
+
 ## Phase status
 
 - [x] **Phase 0: Foundations.** Compose stack, baseline schema, Redis Lua sliding-window rate limiter, GPU semaphore, local-LLM gateway, Alpaca paper probe.
@@ -114,6 +128,17 @@ cd quant
   27-35% tax, much of it through wash sales FIFO creates. The gate needs an after-tax Calmar of
   0.72, which no published long-only rule reaches. Awaiting a decision on the objective. 17 of 20
   trials used (`docs/phase3c/strategy-report.md`).
+- [ ] **Phase 3d: Copying and intraday.** Six pre-registered trials, plus one labelled post-hoc,
+  with the budget raised to 25: the Noise Band (intraday SPY momentum, replicated year by year
+  against its paper), an opening-range breakout on stocks in play, insider clusters (SEC Form 4),
+  a hindsight-free 13F clone, and the "first candle" fair-value-gap rule with a placebo.
+  **`vol_trend_noise` (Phase 3c's `vol_trend` + a Noise Band overlay) passes all four checks
+  in-sample**: $384,832 after tax vs SPY's $294,152, −14.9% max drawdown, Calmar 1.13. It still
+  passes at double costs. It is post-hoc, and the paper's sample overlaps ours, so it is a
+  candidate for Phase 4's lockbox, not proof. The phase also fixed two defects that affected
+  every stock strategy: splits were not applied to held positions, and an empty Russell 1000
+  snapshot emptied the universe from Feb to Jul 2017. Phases 3-3c, re-run on the fixes, still
+  fail. 24 of 25 trials used (`docs/phase3d/strategy-report.md`).
 - [ ] Phase 4: validation (walk-forward, CPCV, after-tax metrics). **Go/no-go**
 - [ ] Phase 5: local-LLM catalyst gate
 - [ ] Phase 6: Java orchestrator (OMS, ledger, blacklist, December flush)

@@ -1,0 +1,28 @@
+variant                             core after-tax value    CAGR   maxDD  Calmar
+as registered                      False         273,879  12.23%  -24.7%    0.49
+costs x2                           False         246,497  10.89%  -28.1%    0.39
+costs x4                           False         199,753   8.25%  -35.3%    0.23
+Alpaca costs ($0 commission)       False         297,149  13.29%  -22.2%    0.60
+vm 1.5 (paper's hindsight best)    False         248,231  10.98%   -8.3%    1.32
+max leverage 2                     False         215,647   9.20%  -13.6%    0.68
+2016-2019 strategy                 False         119,882   4.65%  -24.7%    0.19
+2020-2024 strategy                 False         228,069  19.01%   -9.4%    2.01
+as registered                       True         749,302  26.83%  -33.3%    0.81
+costs x2                            True         690,901  25.67%  -33.3%    0.77
+costs x4                            True         584,792  23.33%  -33.4%    0.70
+Alpaca costs ($0 commission)        True         798,697  27.74%  -33.3%    0.83
+vm 1.5 (paper's hindsight best)     True         661,555  25.14%  -32.5%    0.77
+max leverage 2                      True         679,892  25.46%  -33.2%    0.77
+2016-2019 strategy                  True         198,017  19.87%  -13.4%    1.49
+2016-2019 SPY only                  True         162,774  14.33%  -19.4%    0.74
+2020-2024 strategy                  True         362,305  32.66%  -33.3%    0.98
+2020-2024 SPY only                  True         176,914  14.29%  -33.8%    0.42
+
+vol_trend core + overlay           after-tax value    CAGR   maxDD  Calmar
+as registered                              384,832  16.81%  -14.9%    1.13
+costs x2                                   363,876  16.07%  -16.0%    1.00
+costs x4                                   324,727  14.58%  -18.2%    0.80
+Alpaca costs ($0 commission)               401,777  17.38%  -13.9%    1.25
+vm 1.5 (paper's hindsight best)            342,051  15.26%  -11.6%    1.32
+max leverage 2                             384,832  16.81%  -14.9%    1.13
+2020-2024 only                             232,545  19.80%  -13.3%    1.49

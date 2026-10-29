@@ -32,6 +32,12 @@ _MEMBER_AT_BAR = """
                                   WHERE x.index_name = s.index_name AND x.as_of_date <= {bar}.trade_date))"""
 
 CHECKS: dict[str, str] = {
+    # A snapshot that parsed to nothing would empty the universe until the next one (lesson 03d
+    # §9). The panel skips them; this makes sure they are seen.
+    "empty_snapshot": """
+        SELECT index_name, as_of_date, 'warn', jsonb_build_object('source', source)
+        FROM universe_snapshots WHERE member_count = 0""",
+
     "ohlc_sanity": """
         SELECT b.symbol, b.trade_date, 'error',
                jsonb_build_object('open', b.open, 'high', b.high, 'low', b.low, 'close', b.close)

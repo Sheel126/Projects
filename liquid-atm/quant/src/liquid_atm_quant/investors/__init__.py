@@ -49,9 +49,15 @@ PHASE3_STRATEGIES = ("momentum_funnel",)
 """Strategies whose distinct configurations count against the shared trial budget alongside
 these eight. Baselines (SPY, naive momentum) are benchmarks, not trials."""
 
+PHASE3D_STRATEGIES = ("noise_band", "spy_core_noise", "orb_in_play", "insider_cluster",
+                      "clone_13f", "fvg_first_candle", "vol_trend_noise")
+"""Phase 3d's six pre-registered trials plus one post-hoc (lesson 03d §1, §10): `vol_trend_noise`
+was designed after `spy_core_noise` failed only on drawdown, and says so. They run outside
+`run_investors.py`, but every saved configuration counts against the same budget."""
+
 
 def build(name: str, fundamentals: Fundamentals, sectors: dict[str, str]) -> PortfolioStrategy:
     return STRATEGIES[name](fundamentals, sectors)
 
 
-__all__ = ["PHASE3_STRATEGIES", "STRATEGIES", "build"]
+__all__ = ["PHASE3D_STRATEGIES", "PHASE3_STRATEGIES", "STRATEGIES", "build"]

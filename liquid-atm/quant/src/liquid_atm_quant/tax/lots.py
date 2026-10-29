@@ -132,6 +132,17 @@ class LotBook:
         self.lots.append(lot)
         return lot
 
+    def split(self, symbol: str, ratio: Decimal) -> None:
+        """A stock split: every open lot holds `ratio` times the shares at the same total basis.
+
+        Not a disposal (IRC §1036): no gain, no new holding period. A 2-for-1 is `ratio` 2, a
+        1-for-10 reverse split is 0.1."""
+        for lot in self.lots:
+            if lot.symbol == symbol and lot.is_open:
+                lot.qty_original = as_qty(lot.qty_original * ratio)
+                lot.qty_remaining = as_qty(lot.qty_remaining * ratio)
+                lot.qty_used_as_replacement = as_qty(lot.qty_used_as_replacement * ratio)
+
     # ---- sells -----------------------------------------------------------------------
 
     def open_lots(self, symbol: str) -> list[Lot]:

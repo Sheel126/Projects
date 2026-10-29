@@ -1,0 +1,3 @@
+registered (5 bp slippage, entry minute can stop)        trades  35421  mean -0.621R  hit  7.9%
+paper's costs (no slippage), entry minute can stop       trades  35421  mean -0.226R  hit 10.7%
+no slippage, entry minute never stops (most generous)    trades  35421  mean +0.182R  hit 15.0%

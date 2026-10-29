@@ -8,6 +8,8 @@
   python -m liquid_atm_quant.data.cli yf-backfill
   python -m liquid_atm_quant.data.cli edgar
   python -m liquid_atm_quant.data.cli fundamentals [--start 2014-01-01]   # SEC XBRL company facts
+  python -m liquid_atm_quant.data.cli insiders     # SEC Form 4 open-market trades, 2006 Q1 on
+  python -m liquid_atm_quant.data.cli form13f      # SEC 13F holdings of concentrated books
   python -m liquid_atm_quant.data.cli delistings | dq | coverage | crosscheck
   python -m liquid_atm_quant.data.cli daily        # calendar -> universe -> bars -> dq
 """
@@ -25,7 +27,8 @@ import psycopg
 
 from liquid_atm_quant.config import Settings, get_settings
 from liquid_atm_quant.data import coverage as cov
-from liquid_atm_quant.data import db, edgar, fundamentals, quality, universe, yahoo
+from liquid_atm_quant.data import (db, edgar, form13f, fundamentals, insiders, quality,
+                                   universe, yahoo)
 from liquid_atm_quant.data.alpaca_data import AlpacaData
 from liquid_atm_quant.data.coverage import ALPACA_HISTORY_START
 from liquid_atm_quant.infra.rate_limiter import alpaca_limiter, edgar_limiter, yfinance_limiter
@@ -181,6 +184,28 @@ def fundamentals_sync(conn: psycopg.Connection, settings: Settings, since: date)
     log.info("fundamentals: %s", stats)
 
 
+def insiders_sync(settings: Settings) -> None:
+    """Form 4 open-market trades from the SEC's quarterly data sets (lesson 03d §6).
+
+    Stops at 2024 Q3: the Q4 file holds filings from inside the lockbox."""
+    qs = insiders.quarters(insiders.Quarter(2006, 1), insiders.Quarter(2024, 3))
+    http = httpx.Client(timeout=300, headers={"User-Agent": settings.sec_user_agent},
+                        follow_redirects=True)
+    insiders.download(http, edgar_limiter(make_redis(settings)), qs)
+    frame = insiders.build(qs)
+    log.info("insiders: %d open-market rows, %d issuers", len(frame), frame["issuer_cik"].nunique())
+
+
+def form13f_sync(settings: Settings) -> None:
+    """13F holdings, 2013 Q3 to mid-2024, of books with at most 50 positions (lesson 03d §7)."""
+    names = form13f.files()
+    http = httpx.Client(timeout=600, headers={"User-Agent": settings.sec_user_agent},
+                        follow_redirects=True)
+    form13f.download(http, edgar_limiter(make_redis(settings)), names)
+    frame = form13f.build(names, max_positions=50)
+    log.info("form13f: %d holdings rows, %d filers", len(frame), frame["cik"].nunique())
+
+
 def delistings(conn: psycopg.Connection, settings: Settings) -> None:
     log.info("instruments marked delisted: %d", quality.mark_delistings(conn))
 
@@ -234,7 +259,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="liquid-atm-data", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("job", choices=["sync-calendar", "sync-assets", "universe-live", "universe-history",
-                                        "bars", "yf-backfill", "edgar", "fundamentals", "delistings", "dq", "coverage",
+                                        "bars", "yf-backfill", "edgar", "fundamentals", "insiders", "form13f", "delistings", "dq", "coverage",
                                         "crosscheck", "daily"])
     parser.add_argument("--start", type=date.fromisoformat, default=ALPACA_HISTORY_START)
     parser.add_argument("--symbols", help="comma-separated override for the bars job")
@@ -261,6 +286,10 @@ def main(argv: list[str] | None = None) -> int:
                 edgar_sync(conn, settings, args.start)
             case "fundamentals":
                 fundamentals_sync(conn, settings, min(args.start, date(2014, 1, 1)))
+            case "insiders":
+                insiders_sync(settings)
+            case "form13f":
+                form13f_sync(settings)
             case "delistings":
                 delistings(conn, settings)
             case "dq":

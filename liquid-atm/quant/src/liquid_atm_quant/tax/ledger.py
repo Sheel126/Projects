@@ -121,6 +121,11 @@ class TaxLedger:
                 self._blacklist(disposal)
         return disposals
 
+    def split(self, when: date, symbol: str, ratio: object) -> None:
+        """Restate open lots for a split (see `LotBook.split`). Basis and dates are unchanged."""
+        self._advance(when)
+        self.book.split(symbol, money(ratio))
+
     def dividend(self, when: date, amount: object, qualified: bool = True) -> None:
         self._advance(when)
         self.account.dividend(when, cents(amount), qualified)

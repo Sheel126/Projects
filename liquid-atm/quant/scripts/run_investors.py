@@ -29,7 +29,8 @@ from liquid_atm_quant.backtest.fundamentals import Fundamentals  # noqa: E402
 from liquid_atm_quant.backtest.panel import Panel  # noqa: E402
 from liquid_atm_quant.baselines import BuyAndHold, NaiveMomentum  # noqa: E402
 from liquid_atm_quant.config import get_settings  # noqa: E402
-from liquid_atm_quant.investors import PHASE3_STRATEGIES, STRATEGIES, build  # noqa: E402
+from liquid_atm_quant.investors import (PHASE3_STRATEGIES, PHASE3D_STRATEGIES,  # noqa: E402
+                                        STRATEGIES, build)
 from liquid_atm_quant.strategy import LOCKBOX_START, TRIAL_BUDGET  # noqa: E402
 from liquid_atm_quant.strategy.sectors import load_sectors  # noqa: E402
 
@@ -56,7 +57,8 @@ def gate(rep: dict, spy: dict, momentum: dict) -> list[tuple[str, bool, str]]:
 
 
 def trials_used(conn: psycopg.Connection) -> int:
-    return sum(store.trial_count(conn, name) for name in (*PHASE3_STRATEGIES, *STRATEGIES))
+    names = (*PHASE3_STRATEGIES, *STRATEGIES, *PHASE3D_STRATEGIES)
+    return sum(store.trial_count(conn, name) for name in names)
 
 
 def long_term_share(result) -> float:

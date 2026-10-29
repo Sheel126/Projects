@@ -80,6 +80,29 @@ class AlpacaData:
                                     int(r["v"]), r.get("vw"), round(factor, 10), "alpaca_sip"))
         return bars
 
+    def intraday_bars(self, symbols: Sequence[str], start: datetime, end: datetime,
+                      timeframe: str = "1Min") -> dict[str, list[dict]]:
+        """Raw (unadjusted) intraday SIP bars between two instants, keyed by symbol (Phase 3d).
+
+        Raw on purpose: an intraday strategy trades the printed price, and a day's own bars never
+        straddle a split. Rows keep Alpaca's keys: t (UTC, bar start), o, h, l, c, v, vw, n.
+        """
+        params = {
+            "symbols": ",".join(symbols), "timeframe": timeframe, "feed": "sip",
+            "adjustment": "raw", "start": start.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "end": end.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "limit": 10_000, "sort": "asc",
+        }
+        out: dict[str, list[dict]] = {}
+        while True:
+            body = self._get(f"{DATA_URL}/v2/stocks/bars", params)
+            for sym, rows in (body.get("bars") or {}).items():
+                out.setdefault(sym, []).extend(rows)
+            token = body.get("next_page_token")
+            if not token:
+                return out
+            params = {**params, "page_token": token}
+
     # ---- reference data ----------------------------------------------------------------
 
     def assets(self) -> list[dict]:

@@ -1,0 +1,28 @@
+
+strategy           after-tax value    CAGR   maxDD  Calmar  Sharpe  trades  hold d    tax  LT gain  gate
+--------------------------------------------------------------------------------------------------------
+buy_and_hold_spy           294,152  14.43%  -33.9%    0.43    0.85       1    3191  15.0%     100%  (baseline)
+naive_momentum             239,660  11.55%  -38.2%    0.30    0.54     288      85  31.0%      14%  (baseline)
+buffett_quality            268,769  12.56%  -35.9%    0.35    0.67     152     404  21.0%      62%  fail 3/4
+greenblatt_magic           221,582   9.97%  -38.3%    0.26    0.61     129     582  19.4%      70%  fail 4/4
+lynch_peg                  195,452   8.11%  -44.8%    0.18    0.49     364     169  26.9%      23%  fail 4/4
+canslim                    158,481   6.24%  -32.4%    0.19    0.44     393      81  24.9%      38%  fail 4/4
+templeton_value            143,418   4.22%  -59.9%    0.07    0.29     104     419  20.5%      80%  fail 4/4
+turtle_trend               139,924   3.99%  -10.9%    0.37    0.60     253      68  34.3%       0%  fail 3/4
+all_weather                173,440   6.85%  -21.8%    0.31    0.85       5    3191  15.3%     100%  fail 4/4
+quality_trend              201,495   8.71%  -20.2%    0.43    0.76     407     194  24.7%      40%  fail 3/4
+buffett_quality_cw         205,608   8.98%  -34.7%    0.26    0.53     151     406  22.0%      58%  fail 4/4
+spy_trend                  167,157   6.40%  -37.5%    0.17    0.50      16     199  18.7%      99%  fail 4/4
+quality_cw_trend           172,224   6.70%  -19.9%    0.34    0.62     403     196  26.6%      34%  fail 3/4
+vaa_g4                     151,065   4.84%  -20.1%    0.24    0.53      70      46  35.0%       0%  fail 4/4
+vol_trend                  201,932   8.59%  -19.2%    0.45    0.77      49     108  27.0%      25%  fail 2/4
+vaa_vol_blend              173,100   6.64%  -14.9%    0.44    0.75     105      75  32.1%       7%  fail 2/4
+vol_trend_v2               217,506   9.54%  -20.3%    0.47    0.77      60      89  29.9%      21%  fail 3/4
+=== momentum_funnel  [64d9da1cf06547d7] 2016-01-04 .. 2024-09-30
+  pre-tax    CAGR  -3.62%   vol  9.94%   Sharpe -0.32   maxDD -39.41%   Calmar -0.09
+  after-tax  CAGR  -3.63%   vol  9.77%   Sharpe -0.33   maxDD -38.39%   Calmar -0.09
+  post-liquidation value       72,381.99   (tax paid 5,095.16 + terminal 75.14)
+  trades  1350   hit 45.8%   avg hold 9.6d   exits {'delisted': 7, 'stop_loss': 612, 'take_profit': 178, 'terminal_liquidation': 6, 'time_stop': 547}
+  fills: rate 95.2%  touch-only 0.1%  ambiguous exits 0.0%  adv-capped 0
+  tax: effective 0.0%   wash sales 0   deferred loss 0.00
+  R: expectancy -0.016R   avg win +1.17R   avg loss -1.02R   expired entries 68   strict-rejected 0
