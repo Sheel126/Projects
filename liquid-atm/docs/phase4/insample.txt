@@ -1,0 +1,48 @@
+
+=== Check 1: Deflated Sharpe (2200 sessions, 24 trials)
+  candidate Sharpe 1.35/yr (daily 0.0849), skew 0.28, kurtosis 8.2
+  best Sharpe expected from 24 skill-less trials: 3.16/yr
+  DSR 0.0000 (needs >= 0.95)  -> FAIL
+
+  trial Sharpes (after tax, annualized):
+    vol_trend_noise                1.35
+    spy_core_noise                 1.31
+    noise_band                     1.05
+    all_weather                    0.85
+    vol_trend_v2                   0.77
+    vol_trend                      0.77
+    quality_trend                  0.76
+    vaa_vol_blend                  0.75
+    clone_13f                      0.69
+    buffett_quality                0.67
+    quality_cw_trend               0.62
+    greenblatt_magic               0.61
+    turtle_trend                   0.60
+    vaa_g4                         0.53
+    buffett_quality_cw             0.53
+    spy_trend                      0.50
+    insider_cluster                0.49
+    lynch_peg                      0.49
+    canslim                        0.44
+    templeton_value                0.29
+    momentum_funnel_dfd6d1        -0.20
+    momentum_funnel_64d9da        -0.55
+    fvg_first_candle              -0.69
+    orb_in_play                   -6.92
+
+=== PBO (CSCV, 12870 splits): 16.9%, median logit 1.99
+  in-sample winners: {'vol_trend_noise': 5603, 'spy_core_noise': 4715, 'noise_band': 1230, 'all_weather': 1227, 'turtle_trend': 49, 'quality_trend': 11, 'vaa_vol_blend': 9, 'clone_13f': 9, 'spy_trend': 8, 'vaa_g4': 4, 'insider_cluster': 4, 'canslim': 1}
+
+=== Bootstrap, candidate minus SPY: +1.22%/yr, P(>0) = 60.1%, 90% interval -6.4% .. +9.1%
+
+=== Calendar years, after tax
+  year    vol_trend_noise        vol_trend              spy
+  2016              -0.6%             7.3%            12.7%
+  2017              30.3%            34.0%            21.6%
+  2018              22.3%            -8.0%            -5.0%
+  2019               9.8%            11.7%            31.0%
+  2020              14.8%             2.6%            18.2%
+  2021              26.2%            15.6%            28.5%
+  2022               9.2%            -9.1%           -18.3%
+  2023              23.9%            11.9%            26.0%
+  2024              14.0%            15.4%            21.7%

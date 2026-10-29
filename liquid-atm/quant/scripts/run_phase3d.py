@@ -79,37 +79,50 @@ def trials_used(conn: psycopg.Connection) -> int:
     return sum(store.trial_count(conn, name) for name in names)
 
 
-def spy_daily(panel: Panel) -> dict[date, DailyBar]:
+def spy_daily(panel: Panel, start: date = START) -> dict[date, DailyBar]:
     j = panel.index["SPY"]
     div = panel.dividends().get("SPY", {})
     return {s: DailyBar(float(panel.arrays["open"][t, j]), float(panel.arrays["close"][t, j]),
                         div.get(t, 0.0))
-            for t, s in enumerate(panel.sessions) if s >= START}
+            for t, s in enumerate(panel.sessions) if s >= start}
 
 
 class Runner:
-    def __init__(self, conn: psycopg.Connection) -> None:
+    """`start`/`end` default to the in-sample window. Phase 4 passes the lockbox's, plus
+    `panel_symbols` for a panel of just the ETFs: the Russell 1000 has no snapshots in the lockbox,
+    and the intraday and `vol_trend` trials never read it."""
+
+    def __init__(self, conn: psycopg.Connection, start: date = START, end: date = END,
+                 panel_symbols: list[str] | None = None) -> None:
         self.conn = conn
+        self.start, self.end, self.panel_symbols = start, end, panel_symbols
         self._panel: Panel | None = None
         self._grid: SessionGrid | None = None
         self._minutes = None
         self._vol_trend = None
-        spy = Panel.from_db(conn, START - WARMUP, END, symbols=["SPY"])
-        self.sessions = [s for s in spy.sessions if s >= START]
-        self.daily = spy_daily(spy)
+        spy = Panel.from_db(conn, start - WARMUP, end, symbols=["SPY"])
+        self.sessions = [s for s in spy.sessions if s >= start]
+        self.daily = spy_daily(spy, start)
 
     @property
     def panel(self) -> Panel:
         if self._panel is None:
             t0 = time.time()
-            self._panel = Panel.from_db(self.conn, START - WARMUP, END, index_name="russell1000")
+            if self.panel_symbols:
+                self._panel = Panel.from_db(self.conn, self.start - WARMUP, self.end,
+                                            symbols=self.panel_symbols)
+            else:
+                self._panel = Panel.from_db(self.conn, self.start - WARMUP, self.end,
+                                            index_name="russell1000")
             log.info("panel %d x %d (%.0fs)", *self._panel.shape, time.time() - t0)
         return self._panel
 
     @property
     def grid(self) -> SessionGrid:
         if self._grid is None:
-            self._minutes = bars.load("SPY", date(2016, 1, 1), END)
+            # 90 days covers the 14-session noise area; minutes start in 2016.
+            first = max(date(2016, 1, 1), self.start - timedelta(days=90))
+            self._minutes = bars.load("SPY", first, self.end)
             self._grid = SessionGrid(self._minutes)
         return self._grid
 
@@ -190,7 +203,7 @@ class Runner:
     def benchmarks(self) -> tuple[dict, dict]:
         out = []
         for strategy in (BuyAndHold("SPY"), NaiveMomentum()):
-            result = Backtester(self.panel, BacktestConfig()).run(strategy, START)
+            result = Backtester(self.panel, BacktestConfig()).run(strategy, self.start)
             out.append(m.report(result))
         return out[0], out[1]
 
@@ -199,13 +212,13 @@ class Runner:
     def insider_cluster(self) -> dict:
         trades = insiders.load()
         cik_map = self._cik_map()
-        triggers = clusters(trades[trades["filing_date"] <= END], cik_map, InsiderParams())
+        triggers = clusters(trades[trades["filing_date"] <= self.end], cik_map, InsiderParams())
         strategy = InsiderCluster(triggers, InsiderParams())
         return self._engine(strategy)
 
     def clone_13f(self) -> dict:
         holdings = form13f.load()
-        holdings = holdings[holdings["filing_date"] <= END]
+        holdings = holdings[holdings["filing_date"] <= self.end]
         panel = self.panel
         close = panel.column("close")
         periods = sorted(set(holdings["period"]))
@@ -227,7 +240,7 @@ class Runner:
         return rep
 
     def _engine(self, strategy) -> dict:
-        result = Backtester(self.panel, BacktestConfig()).run(strategy, START)
+        result = Backtester(self.panel, BacktestConfig()).run(strategy, self.start)
         rep = m.report(result)
         rep["calendar_after_tax"] = calendar_returns(result.equity["equity_after_tax"])
         rep["_result"] = result
